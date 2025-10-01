@@ -1,0 +1,30 @@
+# Required
+numpy>=2.2.6 
+scipy
+networkx
+pandas
+matplotlib
+setuptools
+
+# Optional
+plotly<6.0
+folium
+utm
+openpyxl
+geopandas
+rasterio
+rtree
+
+# Documentation
+sphinx
+sphinx_design
+sphinx_rtd_theme
+pydata_sphinx_theme
+sphinxcontrib-bibtex
+
+# Testing
+pytest
+nbformat
+nbconvert
+ipykernel
+coverage

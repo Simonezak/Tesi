@@ -1,0 +1,90 @@
+[
+  {
+    "step": 0,
+    "action_kind": "node",
+    "action_str": "NODE[60] -> pump_down_adjacent",
+    "applied": true,
+    "targets": [
+      "335"
+    ],
+    "reward_structural": 0.0,
+    "action_cost": 0.15000000000000002,
+    "reward_total": -0.15000000000000002,
+    "globals_prev": {
+      "assortativity": 0.046474358974359115,
+      "avg_clustering_C": 0.02920962199312714,
+      "avg_path_length_L": 5496.397692731943,
+      "small_world_sigma": 1.3158056047268203,
+      "small_world_omega": 0.3196055979818389,
+      "C_rand": null,
+      "L_rand": null
+    },
+    "globals_curr": {
+      "assortativity": 0.046474358974359115,
+      "avg_clustering_C": 0.02920962199312714,
+      "avg_path_length_L": 5496.397692731943,
+      "small_world_sigma": 1.3158056047268203,
+      "small_world_omega": 0.3196055979818389,
+      "C_rand": null,
+      "L_rand": null
+    }
+  },
+  {
+    "step": 1,
+    "action_kind": "node",
+    "action_str": "NODE[60] -> pump_up_adjacent",
+    "applied": true,
+    "targets": [
+      "335"
+    ],
+    "reward_structural": 0.0,
+    "action_cost": 0.15000000000000002,
+    "reward_total": -0.15000000000000002,
+    "globals_prev": {
+      "assortativity": 0.046474358974359115,
+      "avg_clustering_C": 0.02920962199312714,
+      "avg_path_length_L": 5496.397692731943,
+      "small_world_sigma": 1.3158056047268203,
+      "small_world_omega": 0.3196055979818389,
+      "C_rand": null,
+      "L_rand": null
+    },
+    "globals_curr": {
+      "assortativity": 0.046474358974359115,
+      "avg_clustering_C": 0.02920962199312714,
+      "avg_path_length_L": 5496.397692731943,
+      "small_world_sigma": 1.3158056047268203,
+      "small_world_omega": 0.3196055979818389,
+      "C_rand": null,
+      "L_rand": null
+    }
+  },
+  {
+    "step": 2,
+    "action_kind": "global",
+    "action_str": "GLOBAL -> noop",
+    "applied": false,
+    "targets": [],
+    "reward_structural": 0.0,
+    "action_cost": 0.0,
+    "reward_total": 0.0,
+    "globals_prev": {
+      "assortativity": 0.046474358974359115,
+      "avg_clustering_C": 0.02920962199312714,
+      "avg_path_length_L": 5496.397692731943,
+      "small_world_sigma": 1.3158056047268203,
+      "small_world_omega": 0.3196055979818389,
+      "C_rand": null,
+      "L_rand": null
+    },
+    "globals_curr": {
+      "assortativity": 0.046474358974359115,
+      "avg_clustering_C": 0.02920962199312714,
+      "avg_path_length_L": 5496.397692731943,
+      "small_world_sigma": 1.3158056047268203,
+      "small_world_omega": 0.3196055979818389,
+      "C_rand": null,
+      "L_rand": null
+    }
+  }
+]
