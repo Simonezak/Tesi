@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from torch_geometric.data import Data
 from torch_geometric.nn import NNConv, global_mean_pool
+import torch.nn.functional as F
+
 
 
 class EdgeAwareGNN(nn.Module):
@@ -132,9 +134,15 @@ class DQNGNN(nn.Module):
 
         return q_actions
 
-    def sample_action(self, data: Data, epsilon: float):
-        q_values = self.forward(data)  # (1, 2*P)
+    def sample_action(self, data, epsilon: float, temperature: float = 1.0):
+        q_values = self.forward(data)  # (1, N)
+        q_values = q_values.detach().cpu().squeeze()  # shape (N,)
+
         if torch.rand(1).item() < epsilon:
-            return torch.randint(0, q_values.size(1), (1,)).item()
+            # Esplorazione pesata: probabilità ∝ exp(Q / T)
+            probs = F.softmax(q_values / temperature, dim=0)
+            action = torch.multinomial(probs, 1).item()
+            return action
         else:
+            # Sfruttamento: azione migliore
             return q_values.argmax().item()

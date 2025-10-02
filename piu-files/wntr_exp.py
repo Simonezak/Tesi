@@ -8,6 +8,7 @@ import torch
 import torch.optim as optim
 import random
 import matplotlib.pyplot as plt
+from actions import open_pipe, close_pipe, close_all_pipes, noop
 
 
 class WNTREnv:
@@ -37,21 +38,20 @@ class WNTREnv:
         self.current_step += 1
 
         if action_index < 2 * self.num_pipes:
-            # azione locale su pipe
             pipe_id = action_index // 2
             act = action_index % 2  # 0=close, 1=open
             pipe_name = self.data.pipe_names[pipe_id]
-            pipe = self.wn.get_link(pipe_name)
-            pipe.initial_status = LinkStatus.Closed if act == 0 else LinkStatus.Open
+
+            if act == 0:
+                close_pipe(self.wn, pipe_name)
+            else:
+                open_pipe(self.wn, pipe_name)
 
         elif action_index == 2 * self.num_pipes:
-            # Global action 0 = non fare nulla
-            pass
+            noop(self.wn)
 
         elif action_index == 2 * self.num_pipes + 1:
-            # Global action 1 = chiudi tutti i tubi
-            for pipe_name in self.wn.pipe_name_list:
-                self.wn.get_link(pipe_name).initial_status = LinkStatus.Closed
+            close_all_pipes(self.wn)
 
         else:
             raise ValueError(f"Azione fuori range: {action_index}")
@@ -62,7 +62,6 @@ class WNTREnv:
         self.t_idx = -1
         next_state, *_ = build_pyg_from_wntr(self.wn, self.results, self.t_idx)
 
-        # reward: pressione media verso 50
         pressures = next_state.x[:, 2].mean().item()
         reward = -abs(pressures - 50.0)
 
@@ -99,7 +98,7 @@ def run_wntr_experiment(inp_path):
         epsilon = max(0.01, 0.1 - 0.01 * (n_epi / 50))
 
         # stampa forme richieste:
-        _ = q(s, debug=True)
+        _ = q(s, debug=False)
 
         while not done:
             a = q.sample_action(s, epsilon)
