@@ -91,13 +91,17 @@ def build_pyg_from_wntr(
         if u_name not in node2idx or v_name not in node2idx:
             continue
 
+        # 🔹 controlla stato della pipe
+        if pipe.initial_status != LinkStatus.Open:
+            continue  # se chiusa → non aggiungere archi
+
         u, v = node2idx[u_name], node2idx[v_name]
         length = float(getattr(pipe, "length", 0.0))
         diameter = float(getattr(pipe, "diameter", 0.0))
         flow = safe_get(df_flow, timestep_index, pipe_name)
         headloss = safe_get(df_headloss, timestep_index, pipe_name)
 
-        # forward
+        # forward edge
         forward_idx = len(edge_index_list)
         edge_index_list.append((u, v))
         edge_attrs.append([length, diameter, flow, headloss])
@@ -105,7 +109,7 @@ def build_pyg_from_wntr(
         forward_edge_idx_for_pipe.append(forward_idx)
         pipe_names.append(pipe_name)
 
-        # reverse (opzionale)
+        # reverse edge (se cfg.undirected)
         if cfg.undirected:
             edge_index_list.append((v, u))
             edge_attrs.append([length, diameter, flow, headloss])

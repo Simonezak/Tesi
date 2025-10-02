@@ -9,6 +9,7 @@ import torch.optim as optim
 import random
 import matplotlib.pyplot as plt
 from actions import open_pipe, close_pipe, close_all_pipes, noop
+import wntr
 
 
 class WNTREnv:
@@ -18,7 +19,6 @@ class WNTREnv:
         self.reset()
 
     def reset(self):
-        import wntr
         self.wn, self.results, self.t_idx = run_wntr_simulation(self.inp_path)
         self.current_step = 0
         self.done = False
@@ -34,7 +34,6 @@ class WNTREnv:
         return self.data
 
     def step(self, action_index):
-        import wntr
         self.current_step += 1
 
         if action_index < 2 * self.num_pipes:
@@ -67,6 +66,65 @@ class WNTREnv:
 
         done = self.current_step >= self.max_steps
         return next_state, reward, done, {}
+    
+
+    def plot_network_state(self, title=""):
+        pressures = self.results.node["pressure"].iloc[self.t_idx]
+        plt.figure(figsize=(10, 8))
+        wntr.graphics.network.plot_network(
+            self.wn,
+            node_attribute=pressures,
+            node_size=30,
+            node_range=[pressures.min(), pressures.max()],
+            add_colorbar=True,
+        )
+        plt.title(title)
+        plt.show()
+
+    def plot_multiple_steps(self, results_list, step_list, actions, titles=None):
+        """
+        Mostra più stati della rete in un'unica figura e colora di rosso
+        il tubo su cui è stata fatta l'azione.
+        """
+        n = len(step_list)
+        plt.figure(figsize=(6*n, 6))
+
+        for i, step in enumerate(step_list):
+            pressures = results_list[i].node["pressure"].iloc[step]
+            ax = plt.subplot(1, n, i+1)
+
+            # base: tutti i tubi grigi
+
+            # prendi l'action index
+            a = actions[i]
+            if isinstance(a, int) and a < 2*self.num_pipes:
+                pipe_id = a // 2
+                pipe_name = self.data.pipe_names[pipe_id]
+
+                # opzionale: aggiungi freccia/annotazione
+                link = self.wn.get_link(pipe_name)
+                u, v = link.start_node, link.end_node
+                x_mid = (u.coordinates[0] + v.coordinates[0]) / 2
+                y_mid = (u.coordinates[1] + v.coordinates[1]) / 2
+                ax.annotate("azione", xy=(x_mid, y_mid), xytext=(x_mid+20, y_mid+20),
+                            arrowprops=dict(facecolor="red", shrink=0.05))
+
+            wntr.graphics.network.plot_network(
+                self.wn,
+                node_attribute=pressures,
+                node_size=30,
+                node_range=[pressures.min(), pressures.max()],
+                add_colorbar=False,
+                ax=ax,
+            )
+
+            if titles is not None:
+                ax.set_title(titles[i])
+
+        plt.tight_layout()
+        plt.show()
+
+
 
 
 
@@ -118,13 +176,49 @@ def run_wntr_experiment(inp_path):
 
         score_list.append(score)
 
-    plt.plot(score_list)
-    plt.xlabel("Episode")
-    plt.ylabel("Reward")
-    plt.title("WNTR DQN Training (azioni per pipe)")
-    plt.grid()
-    plt.show()
+        plt.plot(score_list)
+        plt.xlabel("Episode")
+        plt.ylabel("Reward")
+        plt.title("WNTR DQN Training (azioni per pipe)")
+        plt.grid()
+        plt.show()
+
+
+def run_wntr_experiment_exp(inp_path):
+    seed = 42
+    random.seed(seed)
+    seed_torch(seed)
+
+    env = WNTREnv(inp_path)
+    q = DQNGNN().to(device)
+
+    s = env.reset()
+    epsilon = 0.1
+
+    print("🔎 Avvio esperimento di debug con primi 3 step...")
+
+    results_list = []
+    step_list = []
+    titles = []
+    actions = []
+
+    for i in range(3):
+        a = q.sample_action(s, epsilon)
+        s_prime, r, done, _ = env.step(a)
+
+        results_list.append(env.results)
+        step_list.append(env.t_idx)
+        titles.append(f"Step {i+1} - Action {a}")
+        actions.append(a)
+
+        s = s_prime
+
+    # 🔹 ora passi anche actions
+    env.plot_multiple_steps(results_list, step_list, actions, titles)
+
+
+
 
 
 if __name__ == "__main__":
-    run_wntr_experiment(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\WNTR-main\WNTR-main\examples\networks\Net3.inp")
+    run_wntr_experiment_exp(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\WNTR-main\WNTR-main\examples\networks\Net3.inp")
