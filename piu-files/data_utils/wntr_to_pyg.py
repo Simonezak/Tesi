@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 from wntr.network.elements import LinkStatus
+import matplotlib.pyplot as plt
+import wntr     
 
 import torch
 from torch_geometric.data import Data
@@ -19,6 +21,7 @@ def run_wntr_simulation(inp_path: str,
                         simulation_duration: Optional[int] = None,
                         timestep_index: int = -1):
     import wntr
+    print("chiamato run wntr sim")
     if not os.path.exists(inp_path):
         raise FileNotFoundError(f"INP file non trovato: {inp_path}")
     wn = wntr.network.WaterNetworkModel(inp_path)
@@ -26,6 +29,8 @@ def run_wntr_simulation(inp_path: str,
         wn.options.time.duration = simulation_duration
     sim = wntr.sim.WNTRSimulator(wn)
     results = sim.run_sim()
+    print(results.node["pressure"])
+
     time_index = results.time
     if len(time_index) == 0:
         raise RuntimeError("Nessun timestep prodotto dalla simulazione")
@@ -90,6 +95,12 @@ def build_pyg_from_wntr(
         u_name, v_name = pipe.start_node_name, pipe.end_node_name
         if u_name not in node2idx or v_name not in node2idx:
             continue
+        
+        # per provare i tubi chiusi
+        #if int(pipe_name) % 2 == 0:
+        #    pipe.initial_status = LinkStatus.Closed
+
+        #print(f"  • Pipe {pipe_name:>6s} → {pipe.initial_status}")
 
         # 🔹 controlla stato della pipe
         if pipe.initial_status != LinkStatus.Open:
@@ -114,6 +125,8 @@ def build_pyg_from_wntr(
             edge_index_list.append((v, u))
             edge_attrs.append([length, diameter, flow, headloss])
             edge_names.append(f"{pipe_name}__rev")
+    
+    print("chiamato build pyg")
 
     edge_index = torch.tensor(np.array(edge_index_list, dtype=np.int64).T, dtype=torch.long)
     edge_attr = torch.tensor(np.array(edge_attrs, dtype=np.float32), dtype=torch.float32)
@@ -137,4 +150,46 @@ def build_pyg_from_wntr(
     edge2idx = {name: i for i, name in enumerate(edge_names)}
     idx2edge = {i: name for name, i in edge2idx.items()}
 
+    #plot_current_network(wn, results, timestep_index)
+
     return data, node2idx, idx2node, edge2idx, idx2edge
+
+
+def plot_current_network(wn, results, timestep_index, show_names=False):
+    """
+    Mostra la rete idrica attuale:
+    - Nodi colorati per pressione
+    - Tubi chiusi indicati da una X rossa al centro
+    (nessun colore custom, massima compatibilità)
+    """
+    print(results.node["pressure"])
+
+    pressures = results.node["pressure"].iloc[timestep_index]
+
+    plt.figure(figsize=(9, 7))
+
+    # 🔹 Disegna la rete base (senza colorare i link)
+    wntr.graphics.network.plot_network(
+        wn,
+        node_attribute=pressures,
+        node_size=40,
+        node_range=[pressures.min(), pressures.max()],
+        add_colorbar=True,
+    )
+
+    # 🔹 Disegna una X rossa al centro di ciascun tubo chiuso
+    for pipe_name in wn.pipe_name_list:
+        pipe = wn.get_link(pipe_name)
+        if pipe.initial_status != LinkStatus.Open:
+            u, v = pipe.start_node, pipe.end_node
+            x_mid = (u.coordinates[0] + v.coordinates[0]) / 2
+            y_mid = (u.coordinates[1] + v.coordinates[1]) / 2
+            plt.scatter(x_mid, y_mid, color="red", marker="x", s=100, zorder=5)
+            if show_names:
+                plt.text(x_mid + 5, y_mid + 5, pipe_name, color="red",
+                         fontsize=8, zorder=6)
+
+    plt.title(f"Rete idrica al timestep {timestep_index}\n(rossa X = tubo chiuso)")
+    plt.axis("equal")
+    plt.show()
+

@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch_geometric.data import Data
 from torch_geometric.nn import NNConv, global_mean_pool
 import torch.nn.functional as F
+from actions import open_pipe, close_pipe, close_all_pipes, noop
 
 
 
@@ -111,7 +112,7 @@ class DQNGNN(nn.Module):
         pipe_open = getattr(data, "pipe_open_mask", None)
         if pipe_open is None:
             pipe_open = torch.ones(P, device=q_per_pipe2.device)
-        can_close = pipe_open                         # 1 se aperto
+        can_close = pipe_open.clone()                         # 1 se aperto
         can_open = 1.0 - pipe_open                    # 1 se chiuso
         action_mask = torch.stack([can_close, can_open], dim=-1)  # (P, 2)
 
