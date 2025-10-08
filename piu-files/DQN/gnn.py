@@ -78,7 +78,7 @@ class DQNGNN(nn.Module):
         )
         self.q_global_out = nn.Linear(hidden, 2)
 
-    def forward(self, data: Data, debug: bool=False):
+    def forward(self, data: Data, debug: bool=False): # forward non crea il grafo ma lo riconosce solo. quindi il grafo è gia creato con build from wntr
         # encoder
         node_emb, global_emb = self.encoder(
             data.x, data.edge_index, data.edge_attr,
@@ -136,8 +136,8 @@ class DQNGNN(nn.Module):
         return q_actions
 
     def sample_action(self, data, epsilon: float, temperature: float = 1.0):
-        q_values = self.forward(data)  # (1, N)
-        q_values = q_values.detach().cpu().squeeze()  # shape (N,)
+        q_values = self.forward(data)  # i dati sono mandati a nn.Module. prende in input lo stato del mondo (il grafo PyG) e restituisce le Q-values per tutte le azioni possibili
+        q_values = q_values.detach().cpu().squeeze()
 
         if torch.rand(1).item() < epsilon:
             # Esplorazione pesata: probabilità ∝ exp(Q / T)

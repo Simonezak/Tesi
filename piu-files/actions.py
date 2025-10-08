@@ -1,59 +1,44 @@
-# actions.py
 """
-Definizione delle azioni possibili sugli elementi della rete WNTR.
-Queste funzioni agiscono direttamente sul WaterNetworkModel (wn).
+Azioni per la rete idrica — compatibili con la branch Dynamic-WNTR
+Usano direttamente i metodi di controllo di InteractiveWNTRSimulator.
 """
 
 from wntr.network.elements import LinkStatus
 
 
-def open_pipe(wn, pipe_name: str):
-    """Apre un tubo (imposta stato OPEN)."""
-    pipe = wn.get_link(pipe_name)
-    pipe.initial_status = LinkStatus.Open
-    return wn
-
-
-def close_pipe(wn, pipe_name: str):
-    """Chiude un tubo (imposta stato CLOSED)."""
-    pipe = wn.get_link(pipe_name)
-    pipe.initial_status = LinkStatus.Closed
-    return wn
-
-
-def increase_pressure(wn, node_name: str, delta: float = 5.0):
+def open_pipe(sim, pipe_name: str):
     """
-    Aumenta la pressione desiderata su un nodo.
-    Implementato aumentando la domanda negativa (iniezione) o riducendo la domanda.
+    Apre un tubo specifico nella simulazione interattiva.
     """
-    node = wn.get_node(node_name)
-    try:
-        node.base_demand = max(0.0, node.base_demand - delta)
-    except AttributeError:
-        pass  # se il nodo non ha base_demand
-    return wn
+    if not hasattr(sim, "open_pipe"):
+        raise AttributeError("L'oggetto 'sim' non supporta open_pipe().")
+    sim.open_pipe(pipe_name)
+    print(f"[ACTION] Pipe '{pipe_name}' aperta.")
 
 
-def decrease_pressure(wn, node_name: str, delta: float = 5.0):
+def close_pipe(sim, pipe_name: str):
     """
-    Diminuisce la pressione desiderata su un nodo.
-    Implementato aumentando la domanda al nodo.
+    Chiude un tubo specifico nella simulazione interattiva.
     """
-    node = wn.get_node(node_name)
-    try:
-        node.base_demand = node.base_demand + delta
-    except AttributeError:
-        pass
-    return wn
+    if not hasattr(sim, "close_pipe"):
+        raise AttributeError("L'oggetto 'sim' non supporta close_pipe().")
+    sim.close_pipe(pipe_name)
+    print(f"[ACTION] Pipe '{pipe_name}' chiusa.")
 
 
-def noop(wn):
-    """Non fare nulla (No Operation)."""
-    return wn
+def noop(sim):
+    """
+    Non esegue alcuna azione (step di mantenimento).
+    """
+    print("[ACTION] Nessuna azione (noop).")
 
 
-def close_all_pipes(wn):
-    """Chiudi tutti i tubi della rete."""
-    for pipe_name in wn.pipe_name_list:
-        wn.get_link(pipe_name).initial_status = LinkStatus.Closed
-    return wn
+def close_all_pipes(sim):
+    """
+    Chiude tutti i tubi nella rete.
+    """
+    if not hasattr(sim, "close_pipe"):
+        raise AttributeError("L'oggetto 'sim' non supporta close_pipe().")
+    for pipe_name in sim.wn.pipe_name_list:
+        sim.close_pipe(pipe_name)
+    print("[ACTION] Tutti i tubi chiusi.")

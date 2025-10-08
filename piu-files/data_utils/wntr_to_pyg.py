@@ -1,53 +1,33 @@
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
-from wntr.network.elements import LinkStatus
 import matplotlib.pyplot as plt
-import wntr     
-
+import wntr
 import torch
+import numpy as np
+import pandas as pd
 from torch_geometric.data import Data
+from wntr.network.elements import LinkStatus
 
 
 @dataclass
 class GraphFeatureConfig:
     node_features: Tuple[str, ...] = ("elevation", "demand", "pressure", "leak_demand")
     edge_features: Tuple[str, ...] = ("length", "diameter", "flowrate", "headloss")
-    include_only_junctions: bool = True   # Se True: includi solo i nodi "junction"
-    undirected: bool = True               # Se True: aggiungi archi inversi
-
-
-def run_wntr_simulation(inp_path: str,
-                        simulation_duration: Optional[int] = None,
-                        timestep_index: int = -1):
-    import wntr
-    print("chiamato run wntr sim")
-    if not os.path.exists(inp_path):
-        raise FileNotFoundError(f"INP file non trovato: {inp_path}")
-    wn = wntr.network.WaterNetworkModel(inp_path)
-    if simulation_duration is not None:
-        wn.options.time.duration = simulation_duration
-    sim = wntr.sim.WNTRSimulator(wn)
-    results = sim.run_sim()
-    print(results.node["pressure"])
-
-    time_index = results.time
-    if len(time_index) == 0:
-        raise RuntimeError("Nessun timestep prodotto dalla simulazione")
-    if timestep_index < 0 or timestep_index >= len(time_index):
-        timestep_index = len(time_index) - 1  # sempre ultimo valido
-    return wn, results, timestep_index
+    include_only_junctions: bool = True
+    undirected: bool = True
 
 
 def safe_get(df, timestep_index, col, default=0.0):
+    """Legge in modo sicuro un valore da un DataFrame dei risultati (anche se parziale)."""
     if df is None or col not in df.columns or len(df) == 0:
         return default
-    if timestep_index < 0:
-        timestep_index = len(df) - 1
-    elif timestep_index >= len(df):
-        timestep_index = len(df) - 1
-    return float(df.iloc[timestep_index][col])
-
+    # Se non specificato, prende l’ultimo timestep disponibile
+    try:
+        return float(df.iloc[-1][col])
+    except Exception:
+        return default
+    
 
 def build_pyg_from_wntr(
     wn,
