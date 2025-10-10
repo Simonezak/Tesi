@@ -8,7 +8,7 @@ from actions import open_pipe, close_pipe, close_all_pipes, noop
 
 
 class EdgeAwareGNN(nn.Module):
-    def __init__(self, node_in=4, edge_in=4, hidden=64, num_layers=2, dropout=0.1):
+    def __init__(self, node_in=4, edge_in=3, hidden=64, num_layers=2, dropout=0.1):
         super().__init__()
         layers = []
 
@@ -57,7 +57,7 @@ class DQNGNN(nn.Module):
     Azioni per-pipe: 2 per ciascun tubo (0=close, 1=open).
     Uscita: (1, 2 * P) per un singolo grafo.
     """
-    def __init__(self, node_in=4, edge_in=4, hidden=64, num_layers=2, dropout=0.1):
+    def __init__(self, node_in=4, edge_in=3, hidden=64, num_layers=2, dropout=0.1):
         super().__init__()
         self.encoder = EdgeAwareGNN(node_in=node_in, edge_in=edge_in,
                                     hidden=hidden, num_layers=num_layers,

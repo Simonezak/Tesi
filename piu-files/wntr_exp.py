@@ -3,6 +3,7 @@ import torch.optim as optim
 import random
 import networkx as nx
 from torch_geometric.utils import to_networkx
+import numpy as np
 
 from DQN.gnn import DQNGNN
 from DQN.replay_buffer import ReplayBuffer
@@ -27,24 +28,82 @@ class WNTREnv:
         self.done = False
 
     def reset(self):
+        import numpy as np
+        import wntr
+
+        # ===============================
+        # Crea rete base
+        # ===============================
         self.wn = wntr.network.WaterNetworkModel(self.inp_path)
 
-        # Crea simulatore interattivo e inizializza
+        # ===============================
+        # Aggiungi un leak realistico
+        # ===============================
+
+        # Scegli un tubo casuale
+        pipe_list = self.wn.pipe_name_list
+        pipe_name = np.random.choice(pipe_list)
+        print(f"[LEAK] Tubo selezionato: {pipe_name}")
+
+        # Nomi nuovi per split
+        leak_node_name = f"{pipe_name}_LEAK_NODE"
+        new_pipe_name = f"{pipe_name}_B"
+
+        # Split del tubo (crea nuovo nodo Junction)
+        self.wn = wntr.morph.split_pipe(
+            self.wn,
+            pipe_name_to_split=pipe_name,
+            new_pipe_name=new_pipe_name,
+            new_junction_name=leak_node_name
+        )
+
+        # Ottieni riferimento al nodo leak
+        leak_node = self.wn.get_node(leak_node_name)
+
+        # Calcola area effettiva della perdita (con jitter)
+        D = float(getattr(self.wn.get_link(pipe_name), "diameter", 0.1))
+        leak_area_m2 = 1e-4
+        leak_k_scale = 0.05
+        leak_area_jitter = 0.2
+        jitter = 1.0 + leak_area_jitter * float(np.random.uniform(-1.0, 1.0))
+        area_eff = leak_area_m2 * (D ** 2) * leak_k_scale * jitter
+
+        # Aggiungi la perdita
+        leak_node.add_leak(
+            self.wn,
+            area=float(area_eff),
+            start_time=int(0),  # leak parte a 0
+            end_time=int(12.0 * 3600)    # episodio di 12h
+        )
+
+        print(f"[LEAK] Nodo di perdita aggiunto: {leak_node_name} (area effettiva={area_eff:.2e} m²)")
+        print("Nodi presenti dopo split:", [n for n, _ in self.wn.nodes()])
+
+        # ===============================
+        # 3️⃣ Inizializza simulatore WNTR
+        # ===============================
         self.sim = InteractiveWNTRSimulator(self.wn)
-        self.sim.init_simulation(global_timestep=self.hydraulic_timestep,
-                                 duration=self.max_steps * self.hydraulic_timestep)
+        self.sim.init_simulation(
+            global_timestep=self.hydraulic_timestep,
+            duration=self.max_steps * self.hydraulic_timestep
+        )
 
-        self.sim.step_sim()  # Crea lo stato iniziale
+        # Esegui un passo iniziale
+        self.sim.step_sim()
         self.results = self.sim.get_results()
-        print(self.results.node["pressure"].iloc[-1])
 
+        # ===============================
+        # 4️⃣ Costruisci grafo PyG
+        # ===============================
         self.data, *_ = build_pyg_from_wntr(self.wn, self.results, -1)
         self.num_pipes = int(self.data.num_pipes)
         self.action_dim = 2 * self.num_pipes  # 0=close, 1=open per ciascun tubo
         self.current_step = 0
-        print(self.current_step)
         self.done = False
+
+        print("[RESET] Step iniziale completato, grafo creato.")
         return self.data
+
     
     def step(self, action_index):
 
@@ -70,7 +129,7 @@ class WNTREnv:
         # Avanza la simulazione di un passo
         self.sim.step_sim()
         self.results = self.sim.get_results()
-        print(self.results.node["pressure"].iloc[-1])
+        #print(self.results.node["pressure"].iloc[-1])
 
         next_state, *_ = build_pyg_from_wntr(self.wn, self.results, -1)
 
@@ -145,7 +204,7 @@ def run_wntr_experiment(inp_path):
 
     env = WNTREnv(inp_path, max_steps=5)
 
-    episodes = 3
+    episodes = 2
     learning_rate = 5e-4
     target_update_interval = 5
     train_interval = 1000
