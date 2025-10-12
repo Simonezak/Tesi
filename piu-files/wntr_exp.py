@@ -24,6 +24,7 @@ class WNTREnv:
         self.sim = None
         self.wn = None
         self.results = None
+        self.global_step = 0
         self.current_step = 0
         self.done = False
 
@@ -96,7 +97,7 @@ class WNTREnv:
         # 4️⃣ Costruisci grafo PyG
         # ===============================
         self.data, *_ = build_pyg_from_wntr(self.wn, self.results, -1)
-        self.num_pipes = int(self.data.num_pipes)
+        self.num_pipes = len(self.wn.pipe_name_list)
         self.action_dim = 2 * self.num_pipes  # 0=close, 1=open per ciascun tubo
         self.current_step = 0
         self.done = False
@@ -106,6 +107,8 @@ class WNTREnv:
 
     
     def step(self, action_index):
+
+        self.global_step += 1
 
         if action_index < 2 * self.num_pipes:
             pipe_id = action_index // 2
@@ -120,8 +123,8 @@ class WNTREnv:
         elif action_index == 2 * self.num_pipes:
             noop(self.sim)
 
-        elif action_index == 2 * self.num_pipes + 1:
-            close_all_pipes(self.sim)
+        #elif action_index == 2 * self.num_pipes + 1:
+        #    close_all_pipes(self.sim)
 
         else:
             raise ValueError(f"Azione fuori range: {action_index}")
@@ -220,12 +223,11 @@ def run_wntr_experiment(inp_path):
     for n_epi in range(episodes):
         s = env.reset()
         done, score = False, 0.0
-        epsilon = max(0.01, 0.1 - 0.01 * (n_epi / 50))
 
         _ = q(s, debug=False)  # solo per validare le dimensioni
 
         while not done:
-            a = q.sample_action(s, epsilon)
+            a = q.sample_action(s, env.global_step)
             s_prime, r, done, _ = env.step(a)
             memory.put((s, a, r, s_prime, 0.0 if done else 1.0))
             s = s_prime
@@ -233,7 +235,7 @@ def run_wntr_experiment(inp_path):
 
         if n_epi % target_update_interval == 0 and n_epi != 0:
             avg_score = sum(score_list[-target_update_interval:]) / target_update_interval
-            print(f"Ep {n_epi}, avg score {avg_score:.2f}, eps {epsilon:.2f}")
+            print(f"Ep {n_epi}, avg score {avg_score:.2f}")
             q_target.load_state_dict(q.state_dict())
 
         if memory.size() > train_interval:

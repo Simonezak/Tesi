@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch_geometric.data import Data
 from torch_geometric.nn import NNConv, global_mean_pool
 import torch.nn.functional as F
-from actions import open_pipe, close_pipe, close_all_pipes, noop
+import numpy as np
 
 
 
@@ -92,15 +92,27 @@ class DQNGNN(nn.Module):
         # pipe forward edge indices
         pipe_edge_idx = getattr(data, "pipe_edge_idx", None)
         if pipe_edge_idx is None:
-            raise ValueError("Manca data.pipe_edge_idx (aggiorna build_pyg_from_wntr).")
-        P = int(pipe_edge_idx.numel())
+            raise ValueError("Manca data.pipe_edge_idx.")
+        P = int(data.pipe_edge_idx.numel())
 
-        # node pair embedding per pipe
-        pu = node_emb[edge_u[pipe_edge_idx]]          # (P, H)
-        pv = node_emb[edge_v[pipe_edge_idx]]          # (P, H)
+        valid_mask = data.pipe_edge_idx >= 0
+        pipe_edge_idx_valid = data.pipe_edge_idx[valid_mask]
+
+        pu = torch.zeros((P, node_emb.size(1)), device=node_emb.device)
+        pv = torch.zeros((P, node_emb.size(1)), device=node_emb.device)
+
+        if pipe_edge_idx_valid.numel() > 0:
+            pu_valid = node_emb[edge_u[pipe_edge_idx_valid]]
+            pv_valid = node_emb[edge_v[pipe_edge_idx_valid]]
+            pu[valid_mask] = pu_valid
+            pv[valid_mask] = pv_valid
+
         pair = torch.cat([pu, pv], dim=-1)            # (P, 2H)
         node_pair_feat = self.node_pair_mlp(pair)     # (P, H)
         q_node = self.q_node_out(node_pair_feat)      # (P, 2)
+
+        print(f"P_tot={P}, valid={valid_mask.sum().item()}")
+
 
         # global per-graph (assumiamo un solo grafo alla volta)
         q_global = self.q_global_out(self.q_global_head(global_emb))  # (1, 1)
@@ -115,13 +127,17 @@ class DQNGNN(nn.Module):
         can_close = pipe_open.clone()                         # 1 se aperto
         can_open = 1.0 - pipe_open                    # 1 se chiuso
         action_mask = torch.stack([can_close, can_open], dim=-1)  # (P, 2)
+        print(action_mask.shape)
 
         # maschera sui Q
         invalid = (action_mask < 0.5)
         q_masked = q_per_pipe2.masked_fill(invalid, -1e9)         # (P, 2)
 
-        # flatten (B=1)
-        q_actions = torch.cat([q_masked.reshape(1, -1), q_global], dim=1)  # (1, 2*P + 1)
+        # questo è per evitare di fare close_all_pipes che non lascerebbe alcun arco 
+        # nel grafo e quindi non si potrebbe piu costruire
+        #q_actions = torch.cat([q_masked.reshape(1, -1), q_global], dim=1)  # (1, 2*P + 1)
+        q_actions = q_masked.reshape(1, -1)  # (1, 2*P)
+
 
         if debug:
             print(f"node_emb: {tuple(node_emb.shape)}")               # (N, H)
@@ -135,7 +151,11 @@ class DQNGNN(nn.Module):
 
         return q_actions
 
-    def sample_action(self, data, epsilon: float, temperature: float = 1.0):
+    def sample_action(self, data, global_step, temperature: float = 1.0):
+
+        epsilon = compute_epsilon(global_step)
+        print(epsilon)
+
         q_values = self.forward(data)  # i dati sono mandati a nn.Module. prende in input lo stato del mondo (il grafo PyG) e restituisce le Q-values per tutte le azioni possibili
         q_values = q_values.detach().cpu().squeeze()
 
@@ -147,3 +167,7 @@ class DQNGNN(nn.Module):
         else:
             # Sfruttamento: azione migliore
             return q_values.argmax().item()
+
+"""Decay esponenziale classico"""
+def compute_epsilon(global_step, eps_start=1.0, eps_end=0.05, eps_decay=1e-1):
+    return eps_end + (eps_start - eps_end) * np.exp(-eps_decay * global_step)

@@ -128,6 +128,21 @@ def build_pyg_from_wntr(
             edge_attrs.append([length, diameter, flow])
             edge_names.append(f"{pipe_name}__rev")
 
+    all_pipes = wn.pipe_name_list   
+    pipe_edge_idx = []
+    pipe_open_mask = []
+
+    for pipe_name in all_pipes:
+        pipe = wn.get_link(pipe_name)
+        # Trova se il tubo compare nel grafo (solo se era aperto)
+        if pipe_name in edge_names:
+            idx = edge_names.index(pipe_name)
+            pipe_edge_idx.append(idx)
+            pipe_open_mask.append(1.0)  # tubo aperto e presente nel grafo
+        else:
+            pipe_edge_idx.append(-1)    # tubo chiuso, nessun arco nel grafo
+            pipe_open_mask.append(0.0)  # 0 = chiuso, ma azione ancora possibile
+
     # salva dati archi in CSV
     edge_df = pd.DataFrame({
         "pipe_name": pipe_names,
@@ -148,13 +163,10 @@ def build_pyg_from_wntr(
     data.num_nodes = x.shape[0]
 
     # campi extra
-    data.pipe_edge_idx = torch.tensor(forward_edge_idx_for_pipe, dtype=torch.long)
+    data.pipe_edge_idx = torch.tensor(pipe_edge_idx, dtype=torch.long)
+    data.pipe_open_mask = torch.tensor(pipe_open_mask, dtype=torch.float32)
+    data.pipe_names = all_pipes
     data.num_pipes = len(forward_edge_idx_for_pipe)
-    data.pipe_names = pipe_names
-
-    # maschera stato (1=open, 0=closed)
-    status_list = [1.0 if wn.get_link(name).status == LinkStatus.Open else 0.0 for name in pipe_names]
-    data.pipe_open_mask = torch.tensor(status_list, dtype=torch.float32)
 
     edge2idx = {name: i for i, name in enumerate(edge_names)}
     idx2edge = {i: name for name, i in edge2idx.items()}

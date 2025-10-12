@@ -32,13 +32,14 @@ def noop(sim):
     """
     print("[ACTION] Nessuna azione (noop).")
 
-
+# Per quest'azione bisogna vedere perche se chiudo tutti i tubi quando costruisco il grafo
+# non ci sarà piu neanche un arco quindi va vista come implementarla
 def close_all_pipes(sim):
     """
     Chiude tutti i tubi nella rete.
     """
     if not hasattr(sim, "close_pipe"):
         raise AttributeError("L'oggetto 'sim' non supporta close_pipe().")
-    for pipe_name in sim.wn.pipe_name_list:
+    for pipe_name in sim._wn.pipe_name_list:
         sim.close_pipe(pipe_name)
     print("[ACTION] Tutti i tubi chiusi.")
