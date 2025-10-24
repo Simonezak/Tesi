@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 from torch_geometric.data import Data
 from wntr.network.elements import LinkStatus
+from main_dyn_topologyknown_01 import func_gen_B2_lu
+import networkx as nx
 
 
 @dataclass
@@ -76,7 +78,7 @@ def build_pyg_from_wntr(
         "pressure": pressure,
         "leak_demand": leak_dem,
     })
-    node_df.to_csv(f"graph_nodes.csv", index=False)
+    #node_df.to_csv(f"graph_nodes.csv", index=False)
 
     # ---- archi (pipes) ----
     edge_index_list: List[Tuple[int, int]] = []
@@ -153,7 +155,7 @@ def build_pyg_from_wntr(
         "flow": flows,
         "status": statuses,
     })
-    edge_df.to_csv(f"graph_edges.csv", index=False)
+    #edge_df.to_csv(f"graph_edges.csv", index=False)
 
     # ---- costruisci Data PyG ----
     edge_index = torch.tensor(np.array(edge_index_list, dtype=np.int64).T, dtype=torch.long)
@@ -183,7 +185,6 @@ def plot_current_network(wn, results, timestep_index, show_names=False):
     - Tubi chiusi indicati da una X rossa al centro
     (nessun colore custom, massima compatibilità)
     """
-    print(results.node["pressure"])
 
     pressures = results.node["pressure"].iloc[timestep_index]
 
@@ -214,3 +215,11 @@ def plot_current_network(wn, results, timestep_index, show_names=False):
     plt.axis("equal")
     plt.show()
 
+
+def compute_topo_matrices(edge_index, num_nodes, max_cycle_len=10):
+    G = nx.Graph()
+    edges = edge_index.cpu().T.numpy()
+    G.add_nodes_from(range(num_nodes))
+    G.add_edges_from(edges)
+    B1, B2, _ = func_gen_B2_lu(G, max_cycle_len)
+    return torch.tensor(B1, dtype=torch.float32), torch.tensor(B2, dtype=torch.float32)

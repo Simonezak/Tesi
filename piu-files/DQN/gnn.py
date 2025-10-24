@@ -4,36 +4,59 @@ from torch_geometric.data import Data
 from torch_geometric.nn import NNConv, global_mean_pool
 import torch.nn.functional as F
 import numpy as np
+import networkx as nx
+from main_dyn_topologyknown_01 import func_gen_B2_lu
 
 
-
-class EdgeAwareGNN(nn.Module):
-    def __init__(self, node_in=4, edge_in=3, hidden=64, num_layers=2, dropout=0.1):
+class TopologicalGNN(nn.Module):
+    """
+    GNN con layer topologico integrato:
+    - Calcola B1 e B2 del grafo
+    - Costruisce la matrice topologica T = B1*B1^T + B2*B2^T
+    - Applica T alle embedding nodali
+    """
+    def __init__(self, node_in=4, edge_in=3, hidden=64, num_layers=2,
+                 dropout=0.1, max_cycle_len=10, alpha=1.0, beta=1.0):
         super().__init__()
-        layers = []
+        self.hidden = hidden
+        self.alpha = alpha
+        self.beta = beta
+        self.max_cycle_len = max_cycle_len
 
+        # blocco GNN standard
+        layers = []
         edge_nn1 = nn.Sequential(
             nn.Linear(edge_in, 64),
             nn.ReLU(),
-            nn.Linear(64, node_in * hidden),
+            nn.Linear(64, node_in * hidden)
         )
-        conv1 = NNConv(in_channels=node_in, out_channels=hidden, nn=edge_nn1, aggr="mean")
+        conv1 = NNConv(node_in, hidden, edge_nn1, aggr="mean")
         layers.append(conv1)
 
         for _ in range(num_layers - 1):
             edge_nn = nn.Sequential(
                 nn.Linear(edge_in, 128),
                 nn.ReLU(),
-                nn.Linear(128, hidden * hidden),
+                nn.Linear(128, hidden * hidden)
             )
-            conv = NNConv(in_channels=hidden, out_channels=hidden, nn=edge_nn, aggr="mean")
+            conv = NNConv(hidden, hidden, edge_nn, aggr="mean")
             layers.append(conv)
 
         self.convs = nn.ModuleList(layers)
         self.norms = nn.ModuleList([nn.LayerNorm(hidden) for _ in layers])
         self.act = nn.ReLU()
         self.dropout = nn.Dropout(dropout)
-        self.hidden = hidden
+
+    def _compute_topo_matrices(self, edge_index, num_nodes):
+        """Costruisce B1, B2 come in func_gen_B2_lu."""
+        G = nx.Graph()
+        edges = edge_index.cpu().T.numpy()
+        G.add_nodes_from(range(num_nodes))
+        G.add_edges_from(edges)
+        B1, B2, _ = func_gen_B2_lu(G, self.max_cycle_len)
+        B1 = torch.tensor(B1, dtype=torch.float32)
+        B2 = torch.tensor(B2, dtype=torch.float32)
+        return B1, B2
 
     def forward(self, x, edge_index, edge_attr, batch=None, return_node_emb=False):
         h = x
@@ -43,10 +66,27 @@ class EdgeAwareGNN(nn.Module):
             h = ln(h)
             h = self.dropout(h)
 
+        # 🔹 parte topologica
+        num_nodes = h.size(0)
+        B1, B2 = self._compute_topo_matrices(edge_index, num_nodes)
+        B1, B2 = B1.to(h.device), B2.to(h.device)
+
+        # calcola la matrice combinata
+        L1 = B1 @ B1.T
+        L2 = B2 @ B2.T
+        # padding per allineare se necessario
+        if L2.size(0) != num_nodes:
+            pad_n = num_nodes - L2.size(0)
+            L2 = F.pad(L2, (0, pad_n, 0, pad_n))
+        T = self.alpha * L1 + self.beta * L2
+
+        # applica la trasformazione topologica
+        h = torch.matmul(T, h)
+
         if batch is None:
             batch = torch.zeros(h.size(0), dtype=torch.long, device=h.device)
-
         g = global_mean_pool(h, batch)
+
         if return_node_emb:
             return h, g
         return g
@@ -59,7 +99,7 @@ class DQNGNN(nn.Module):
     """
     def __init__(self, node_in=4, edge_in=3, hidden=64, num_layers=2, dropout=0.1):
         super().__init__()
-        self.encoder = EdgeAwareGNN(node_in=node_in, edge_in=edge_in,
+        self.encoder = TopologicalGNN(node_in=node_in, edge_in=edge_in,
                                     hidden=hidden, num_layers=num_layers,
                                     dropout=dropout)
         # testa node-based: combina i due nodi estremi del pipe
