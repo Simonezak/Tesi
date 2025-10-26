@@ -12,6 +12,107 @@ from main_dyn_topologyknown_01 import func_gen_B2_lu
 import networkx as nx
 
 
+import numpy as np
+import networkx as nx
+import wntr
+
+def build_nx_graph_from_wntr(wn, results=None, timestep_index=-1):
+    """
+    Costruisce un grafo NetworkX con i nomi originali dei nodi WNTR.
+    Compatibile con func_gen_B2_lu (usa mappa interna).
+    
+    Args:
+        wn : wntr.network.WaterNetworkModel
+        results : wntr.sim.results.SimulationResults | None
+        timestep_index : int, default=-1
+
+    Returns:
+        G : networkx.Graph
+            Grafo con i nodi come nomi originali (es. 'J1', 'R1', 'T1').
+        coords : np.ndarray
+            Array (n_nodes, 2) con le coordinate (x, y) di ciascun nodo.
+    """
+
+    # ===============================
+    # 1️⃣ Inizializza grafo base
+    # ===============================
+    G = nx.Graph()
+
+    # ---- Lettura dati dai risultati (se disponibili) ----
+    df_demand = getattr(results.node, "get", lambda *_: None)("demand", None) if results else None
+    df_pressure = getattr(results.node, "get", lambda *_: None)("pressure", None) if results else None
+    df_leak = getattr(results.node, "get", lambda *_: None)("leak_demand", None) if results else None
+    df_flow = getattr(results.link, "get", lambda *_: None)("flowrate", None) if results else None
+
+    # ===============================
+    # 2️⃣ Nodi
+    # ===============================
+    for node_name, node in wn.nodes():
+        elev = float(getattr(node, "elevation", 0.0))
+        demand = float(df_demand.iloc[timestep_index][node_name]) if df_demand is not None else 0.0
+        pressure = float(df_pressure.iloc[timestep_index][node_name]) if df_pressure is not None else 0.0
+        leak_dem = float(df_leak.iloc[timestep_index][node_name]) if df_leak is not None else 0.0
+
+        G.add_node(
+            node_name,
+            pos=node.coordinates if hasattr(node, "coordinates") else (0.0, 0.0),
+            elevation=elev,
+            demand=demand,
+            pressure=pressure,
+            leak_demand=leak_dem,
+            type=node.__class__.__name__,
+        )
+
+    # ===============================
+    # 3️⃣ Archi
+    # ===============================
+    for pipe_name in wn.pipe_name_list:
+        pipe = wn.get_link(pipe_name)
+        start, end = pipe.start_node_name, pipe.end_node_name
+        if start not in G or end not in G:
+            continue
+
+        length = float(getattr(pipe, "length", 0.0))
+        diameter = float(getattr(pipe, "diameter", 0.0))
+        flow = float(df_flow.iloc[timestep_index][pipe_name]) if df_flow is not None else 0.0
+        status = 1.0 if pipe.status == wntr.network.elements.LinkStatus.Open else 0.0
+
+        G.add_edge(
+            start,
+            end,
+            pipe_name=pipe_name,
+            length=length,
+            diameter=diameter,
+            flowrate=flow,
+            open_mask=status,
+        )
+
+    # ===============================
+    # 4️⃣ Coordinate e compatibilità con func_gen_B2_lu
+    # ===============================
+    # mappatura interna per i cicli topologici
+    mapping = {name: i for i, name in enumerate(G.nodes())}
+    G = nx.relabel_nodes(G, mapping, copy=True)
+
+    # coordinate in ordine numerico coerente con la mappa
+    coords = np.array([
+        wn.get_node(orig_name).coordinates if hasattr(wn.get_node(orig_name), "coordinates") else (0.0, 0.0)
+        for orig_name in wn.node_name_list if orig_name in mapping
+    ])
+
+    return G, coords
+
+
+
+
+
+
+
+
+
+
+
+
 @dataclass
 class GraphFeatureConfig:
     node_features: Tuple[str, ...] = ("elevation", "demand", "pressure", "leak_demand")
