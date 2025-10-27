@@ -13,7 +13,7 @@ from data_utils.wntr_to_pyg import build_pyg_from_wntr, build_nx_graph_from_wntr
 from actions import open_pipe, close_pipe, close_all_pipes, noop
 import matplotlib.pyplot as plt
 from main_dyn_topologyknown_01 import func_gen_B2_lu
-from topological import compute_polygon_flux, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f
+from topological import compute_polygon_flux, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits
 
 import wntr
 from wntr.sim.interactive_network_simulator import InteractiveWNTRSimulator
@@ -45,16 +45,15 @@ class WNTREnv:
         # ===============================
 
         self.leak_node_name = None
-
         if with_leak:
-            """
+            
             junctions = [
                 name for name, node in self.wn.nodes()
                 if isinstance(node, wntr.network.elements.Junction)
             ]
             self.leak_node_name = np.random.choice(junctions)
-            """
-            self.leak_node_name = "J1"
+            
+            self.leak_node_name = "11"
             print(f"[LEAK] Nodo selezionato per la perdita: {self.leak_node_name}")
 
             # parametri leak
@@ -128,24 +127,15 @@ def run_wntr_experiment(inp_path):
     wn = env.wn
     sim = env.sim
 
-    # ---------------------------
-    # 2️⃣ Esegui alcuni step di simulazione
-    # ---------------------------
-    print("\n Esecuzione simulazione")
-    for step in range(1, env.max_steps + 1):
-        print(f" Step {step}/{env.max_steps}")
-        sim.step_sim()
-        results = sim.get_results()
+    # Primo Step
 
-    env.results = results  # aggiorna l’ambiente
+    step = 1
+    print(f" Step {step}/{env.max_steps}")
+    sim.step_sim()
+    results = sim.get_results()
 
-    # ---------------------------
-    # 3️⃣ Costruisci il grafo NetworkX e calcola B1, B2, cicli
-    # ---------------------------
     G, coords = build_nx_graph_from_wntr(wn, results)
-
     B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length=8)
-
 
     # Calcolo matrice dei flussi
     f = construct_matrix_f(wn, results)
@@ -153,11 +143,65 @@ def run_wntr_experiment(inp_path):
     # Calcolo flusso per poligono e limiti iniziali per confrontare
     f_polygons = compute_polygon_flux(f, B2)
     vmin, vmax = get_inital_polygons_flux_limits(f_polygons)
+    vmin2, vmax2 = get_initial_node_demand_limits(G)
+    vmin3, vmax3 = get_initial_edge_flow_limits(f)
 
     # Ottengo Coordinate e leak node per la funzione
     leak_node = wn.get_node(env.leak_node_name)
     
     # Visualizza con la nuova funzione
+    plot_node_demand(G, coords, vmin2, vmax2, step=step)
+    plot_edge_flowrate(G, coords, f, vmin3, vmax3, step=step)
+
+    plot_cell_complex_flux(
+        G,
+        coords,
+        selected_cycles,
+        f_polygons=f_polygons,
+        vmin=vmin,
+        vmax=vmax,
+        leak_node=leak_node,
+        step=step,
+        figsize=(8, 8),
+        cmap="plasma",
+        node_size=40,
+        annotate=True,
+    )
+    plt.show()
+
+
+    # ---------------------------
+    # 2️⃣ Esegui alcuni step di simulazione
+    # ---------------------------
+    for step in range(2, env.max_steps + 1):
+        print(f" Step {step}/{env.max_steps}")
+        #if step == 4:
+        #    leak_node_name = "11"
+        #    print(f"[LEAK] Nodo selezionato per la perdita: {leak_node_name}")
+
+            # parametri leak
+        #    area = 0.05
+        #    sim.start_leak(leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
+
+        sim.step_sim()
+        results = sim.get_results()
+
+    # ---------------------------
+    # 3️⃣ Ricalcolo metriche diverse per l'ultimo step
+    # ---------------------------
+
+    G, coords = build_nx_graph_from_wntr(wn, results)
+
+    B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length=7)
+    #filtered_cycles = [c for c in selected_cycles if len(c) <= 5]
+
+    f = construct_matrix_f(wn, results)
+    f_polygons = compute_polygon_flux(f, B2)
+    
+    # Visualizza con la nuova funzione
+    plot_node_demand(G, coords, vmin2, vmax2, step=step)
+    plot_edge_flowrate(G, coords, f, vmin3, vmax3, step=step)
+
     plot_cell_complex_flux(
         G,
         coords,
@@ -202,7 +246,6 @@ def run_wntr_experiment(inp_path):
     """
 
 
-
 if __name__ == "__main__":
-    run_wntr_experiment(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Grid.inp")
+    run_wntr_experiment(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin.inp")
 
