@@ -117,7 +117,6 @@ def build_nx_graph_from_wntr(wn, results=None, timestep_index=-1):
 class GraphFeatureConfig:
     node_features: Tuple[str, ...] = ("elevation", "demand", "pressure", "leak_demand")
     edge_features: Tuple[str, ...] = ("length", "diameter", "flowrate")
-    include_only_junctions: bool = True
     undirected: bool = True
 
 
@@ -144,19 +143,12 @@ def build_pyg_from_wntr(
     from wntr.network.elements import Junction, LinkStatus
 
     # ---- nodi ----
-    node_names: List[str] = []
-    
-    if cfg.include_only_junctions:
-        node_names = [name for name, node in wn.nodes() if isinstance(node, Junction)]
-    else:
-        node_names = [name for name, _ in wn.nodes()]
-
-
+    node_names: List[str] = [name for name, _ in wn.nodes()]  # includi TUTTI i nodi
     node2idx = {name: i for i, name in enumerate(node_names)}
     idx2node = {i: name for name, i in node2idx.items()}
 
+    # Lettura attributi di ogni nodo
     elev, demand, pressure, leak_dem = [], [], [], []
-
     df_demand: Optional[pd.DataFrame] = results.node.get("demand", None)
     df_pressure: Optional[pd.DataFrame] = results.node.get("pressure", None)
     df_leak: Optional[pd.DataFrame] = results.node.get("leak_demand", None)
@@ -167,19 +159,8 @@ def build_pyg_from_wntr(
         demand.append(safe_get(df_demand, timestep_index, name))
         pressure.append(safe_get(df_pressure, timestep_index, name))
         leak_dem.append(safe_get(df_leak, timestep_index, name))
-
-    x = np.stack([elev, demand, pressure, leak_dem], axis=1)
-    x_torch = torch.tensor(x, dtype=torch.float32)
-
-    # salva dati nodi in CSV
-    node_df = pd.DataFrame({
-        "node_name": node_names,
-        "elevation": elev,
-        "demand": demand,
-        "pressure": pressure,
-        "leak_demand": leak_dem,
-    })
-    #node_df.to_csv(f"graph_nodes.csv", index=False)
+        x = np.stack([elev, demand, pressure, leak_dem], axis=1)
+        x_torch = torch.tensor(x, dtype=torch.float32)
 
     # ---- archi (pipes) ----
     edge_index_list: List[Tuple[int, int]] = []
@@ -245,18 +226,6 @@ def build_pyg_from_wntr(
         else:
             pipe_edge_idx.append(-1)    # tubo chiuso, nessun arco nel grafo
             pipe_open_mask.append(0.0)  # 0 = chiuso, ma azione ancora possibile
-
-    # salva dati archi in CSV
-    edge_df = pd.DataFrame({
-        "pipe_name": pipe_names,
-        "start_node": starts,
-        "end_node": ends,
-        "length": lengths,
-        "diameter": diameters,
-        "flow": flows,
-        "status": statuses,
-    })
-    #edge_df.to_csv(f"graph_edges.csv", index=False)
 
     # ---- costruisci Data PyG ----
     edge_index = torch.tensor(np.array(edge_index_list, dtype=np.int64).T, dtype=torch.long)

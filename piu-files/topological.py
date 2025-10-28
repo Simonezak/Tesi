@@ -281,6 +281,70 @@ def plot_edge_flowrate(G, coords, f, vmin, vmax,
 
 
 
+def plot_leak_probability(G, coords, leak_probs, leak_node=None,
+                          figsize=(8,8), cmap='plasma', node_size=80,
+                          edge_color='k', annotate=True, annot_fontsize=8):
+    """
+    Visualizza la probabilità di leak per ciascun nodo.
+
+    Args:
+        G             : networkx.Graph (grafo della rete)
+        coords        : np.ndarray (n_nodes, 2) coordinate [x, y]
+        leak_probs    : torch.Tensor o np.ndarray (n_nodes,)
+        leak_node     : nome o indice del nodo con perdita reale (opzionale)
+    """
+    import torch
+
+    if isinstance(leak_probs, torch.Tensor):
+        leak_probs = leak_probs.detach().cpu().numpy().flatten()
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Normalizzazione colori
+    norm = colors.Normalize(vmin=np.min(leak_probs), vmax=np.max(leak_probs))
+    cmap_obj = plt.get_cmap(cmap)
+    node_colors = [cmap_obj(norm(p)) for p in leak_probs]
+
+    # Disegna archi
+    for u, v in G.edges():
+        x0, y0 = coords[u]
+        x1, y1 = coords[v]
+        ax.plot([x0, x1], [y0, y1], color=edge_color, linewidth=1, zorder=1)
+
+    # Disegna nodi
+    ax.scatter(coords[:, 0], coords[:, 1], s=node_size*1.5,
+               c=node_colors, edgecolor='black', zorder=3)
+
+    # Annotazioni con probabilità in notazione scientifica
+    if annotate:
+        for i, (x, y) in enumerate(coords):
+            prob = leak_probs[i]
+            ax.text(x, y, f"{prob:.1e}", color='black', fontsize=annot_fontsize,
+                    ha='center', va='center', fontweight='bold', zorder=5)
+
+    # Evidenzia nodo leak reale
+    if leak_node is not None:
+        if isinstance(leak_node, str):
+            leak_idx = list(G.nodes()).index(leak_node)
+        else:
+            leak_idx = int(leak_node)
+        x, y = coords[leak_idx]
+        ax.text(x + 5, y + 5, "LEAK", color='red', fontsize=10,
+                fontweight='bold', zorder=11)
+
+    sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
+    fig.colorbar(sm, ax=ax, label="Leak probability")
+
+    ax.set_title("Leak probability per node")
+    ax.set_aspect("equal")
+    ax.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+    return fig, ax
+
+
+
 
 def compute_polygon_flux(f, B2, abs: bool = False):
     """

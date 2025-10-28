@@ -6,14 +6,12 @@ from torch_geometric.utils import to_networkx
 import numpy as np
 import networkx as nx
 
-from DQN.gnn import DQNGNN
-from DQN.replay_buffer import ReplayBuffer
-from DQN.train_utils import seed_torch, train, device
+
 from data_utils.wntr_to_pyg import build_pyg_from_wntr, build_nx_graph_from_wntr
 from actions import open_pipe, close_pipe, close_all_pipes, noop
 import matplotlib.pyplot as plt
 from main_dyn_topologyknown_01 import func_gen_B2_lu
-from topological import compute_polygon_flux, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits
+from topological import compute_polygon_flux, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability
 
 import wntr
 from wntr.sim.interactive_network_simulator import InteractiveWNTRSimulator
@@ -200,35 +198,85 @@ def run_wntr_experiment(inp_path):
     plot_cell_complex_flux(G, coords, selected_cycles, f_polygons_abs, vmin, vmax, leak_node, step)
 
 
+def run_GNN_experiment(inp_path):
 
-    """
-    while not done:
-        a = q.sample_action(s, env.global_step)
-        s_prime, r, done, _ = env.step(a)
-        memory.put((s, a, r, s_prime, 0.0 if done else 1.0))
-        s = s_prime
-        score += r
+    from torch_geometric.utils import to_dense_adj
+    from GNN_LD import GNNLeakDetector
+    import torch.nn as nn
 
-    if n_epi % target_update_interval == 0 and n_epi != 0:
-        avg_score = sum(score_list[-target_update_interval:]) / target_update_interval
-        print(f"Ep {n_epi}, avg score {avg_score:.2f}")
-        q_target.load_state_dict(q.state_dict())
+    # ---------------------------
+    # 1️⃣ Setup ambiente
+    # ---------------------------
 
-    if memory.size() > train_interval:
-        train(q, q_target, memory, optimizer)
-        memory.clear()
+    print("\n=== 💧 Training GNN on a single LEAK scenario ===")
+    env = WNTREnv(inp_path, max_steps=5, hydraulic_timestep=3600)
+    env.reset(with_leak=True)
+    wn = env.wn
+    sim = env.sim
+    leak_node = env.leak_node_name
+    print(f"[INFO] Leak at node: {leak_node}")
 
-    score_list.append(score)
+    graphs, labels = [], []
 
-    plt.plot(score_list)
-    plt.xlabel("Episode")
-    plt.ylabel("Reward")
-    plt.title("WNTR DQN Training (Dynamic Step Sim)")
-    plt.grid()
-    plt.show()
-    """
+    # 🔹 Step 1: Simulazione su più timestep
+    for step in range(env.max_steps):
+        sim.step_sim()
+        results = sim.get_results()
+        data, node2idx, idx2node, edge2idx, idx2edge = build_pyg_from_wntr(wn, results, -1)
+
+        # label = 1 per il nodo con perdita
+        y = torch.zeros(data.num_nodes, 1)
+        if leak_node in node2idx:
+            y[node2idx[leak_node]] = 1.0
+        else:
+            print(f"[WARN] Leak node {leak_node} not in current graph.")
+
+        graphs.append(data)
+        labels.append(y)
+
+    # 🔹 Step 2: Costruisci modello
+    model = GNNLeakDetector(node_in_dim=graphs[0].x.shape[1], hidden_dim=64)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_fn = nn.BCELoss()
+
+    print("\n[TRAINING] Starting...")
+    for epoch in range(50):
+        total_loss = 0.0
+        for data, y in zip(graphs, labels):
+            model.train()
+            optimizer.zero_grad()
+
+            preds = model(data)
+            loss = loss_fn(preds, y)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+        print(f"Epoch {epoch+1:03d} | Loss: {total_loss/len(graphs):.4f}")
+
+    # 🔹 Step 3: Testa sull’ultimo timestep
+    model.eval()
+    with torch.no_grad():
+        preds = model(graphs[-1])
+        preds_bin = (preds > 0.5).float()
+
+    print("\n=== Risultati finali ===")
+    print(f"Leak reale: {leak_node}")
+
+    probs = preds.squeeze().detach().cpu()       # Conversione del tensore in array leggibile
+    topk = torch.topk(probs, k=3)                # Prende le 3 probabilità più alte
+
+    for rank, (idx, val) in enumerate(zip(topk.indices.tolist(), topk.values.tolist()), start=1):
+        node_name = idx2node[idx]                # Converte indice interno → nome nodo WNTR
+        print(f" {rank}. Nodo {node_name} → prob = {val:.4f}")
+
+    G, coords = build_nx_graph_from_wntr(wn, results)
+    plot_leak_probability(G, coords, preds, node2idx[env.leak_node_name])
+
+
+
 
 
 if __name__ == "__main__":
-    run_wntr_experiment(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin.inp")
+    run_GNN_experiment(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin.inp")
 
