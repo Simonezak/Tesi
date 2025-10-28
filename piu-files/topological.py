@@ -69,7 +69,11 @@ def construct_matrix_f(wn, results):
     return f
 
 
-    
+# il colore è dato dalla valore assoluto del flusso, indipendentemente dal verso
+# penso che il verso sia importante perche dice il verso in cui scorre l'acqua in quel poligono
+
+# d'altra parte, osservare il grafico dei valori assoluti dei poligoni può essere utile perchè
+# può visuallizzare quali sono i poligoni in cui scorre più acqua in un certo istante di tempo all'interno del water network
 def plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax,
                       leak_node=None, step=None,
                       figsize=(8,8),
@@ -90,14 +94,6 @@ def plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax,
       f_polygons      (np.ndarray): [Ncycles x 1] flussi netti per ciclo
       vmin, vmax      (float): limiti min e max per la colormap
       leak_node_name  (str, opzionale): nome del nodo con perdita
-      figsize         tuple: matplotlib figure size
-      cmap            string or Colormap: for the cycle fill
-      edge_color      str: color for graph edges
-      node_size       int: size for node markers
-      node_facecolor  str: fill color for nodes
-      node_edgecolor  str: outline color for nodes
-      annotate        bool: whether to label nodes by index
-      annot_fontsize  int: font size for labels
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -119,7 +115,7 @@ def plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax,
         if annotate:
             centroid_x = np.mean(poly[:, 0])
             centroid_y = np.mean(poly[:, 1])
-            flux_val = abs(f_polygons[ci, 0])
+            flux_val = f_polygons[ci, 0]
             ax.text(centroid_x, centroid_y, f"{flux_val:.3f}",
                     color="black", fontsize=annot_fontsize,
                     ha="center", va="center",
@@ -286,7 +282,7 @@ def plot_edge_flowrate(G, coords, f, vmin, vmax,
 
 
 
-def compute_polygon_flux(f, B2):
+def compute_polygon_flux(f, B2, abs: bool = False):
     """
     Calcola il flusso netto per ciascun poligono
     in base al vettore dei flussi (f) e alla matrice topologica B2.
@@ -297,6 +293,11 @@ def compute_polygon_flux(f, B2):
     Ritorna:
         f_polygons: [Npolygons x 1] vettore dei flussi per poligono
     """
+
+    if abs:
+        # Flusso "non orientato": somma dei moduli per ogni poligono
+        f = np.abs(f)
+        B2 = np.abs(B2)
 
     # Moltiplicazione Matrici B2' * f
     f_polygons = B2.T @ f

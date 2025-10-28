@@ -141,7 +141,9 @@ def run_wntr_experiment(inp_path):
     f = construct_matrix_f(wn, results)
 
     # Calcolo flusso per poligono e limiti iniziali per confrontare
-    f_polygons = compute_polygon_flux(f, B2)
+    f_polygons = compute_polygon_flux(f, B2, False)
+    f_polygons_abs = compute_polygon_flux(f, B2, True)
+
     vmin, vmax = get_inital_polygons_flux_limits(f_polygons)
     vmin2, vmax2 = get_initial_node_demand_limits(G)
     vmin3, vmax3 = get_initial_edge_flow_limits(f)
@@ -149,25 +151,15 @@ def run_wntr_experiment(inp_path):
     # Ottengo Coordinate e leak node per la funzione
     leak_node = wn.get_node(env.leak_node_name)
     
-    # Visualizza con la nuova funzione
+    # Plot Demand nodi e Flowrate archi
     plot_node_demand(G, coords, vmin2, vmax2, step=step)
+    # è normale che in plot edge flowrate gli archi abbiano segno diverso rispetto a come sono in plot cell complex flux, perchè
+    # la direzione viene poi cambiata qunado viene calcolato f_polygons, perche B2 da un verso arbitrario all'edge in base alla direzione che vuole dare al poligono
     plot_edge_flowrate(G, coords, f, vmin3, vmax3, step=step)
 
-    plot_cell_complex_flux(
-        G,
-        coords,
-        selected_cycles,
-        f_polygons=f_polygons,
-        vmin=vmin,
-        vmax=vmax,
-        leak_node=leak_node,
-        step=step,
-        figsize=(8, 8),
-        cmap="plasma",
-        node_size=40,
-        annotate=True,
-    )
-    plt.show()
+    # Plot poligoni prima senza valori assoluti e poi con valori assoluti
+    plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax, leak_node, step)
+    plot_cell_complex_flux(G, coords, selected_cycles, f_polygons_abs, vmin, vmax, leak_node, step)
 
 
     # ---------------------------
@@ -196,27 +188,18 @@ def run_wntr_experiment(inp_path):
     #filtered_cycles = [c for c in selected_cycles if len(c) <= 5]
 
     f = construct_matrix_f(wn, results)
-    f_polygons = compute_polygon_flux(f, B2)
+
+    f_polygons = compute_polygon_flux(f, B2, False)
+    f_polygons_abs = compute_polygon_flux(f, B2, True)
     
     # Visualizza con la nuova funzione
     plot_node_demand(G, coords, vmin2, vmax2, step=step)
     plot_edge_flowrate(G, coords, f, vmin3, vmax3, step=step)
 
-    plot_cell_complex_flux(
-        G,
-        coords,
-        selected_cycles,
-        f_polygons=f_polygons,
-        vmin=vmin,
-        vmax=vmax,
-        leak_node=leak_node,
-        step=step,
-        figsize=(8, 8),
-        cmap="plasma",
-        node_size=40,
-        annotate=True,
-    )
-    plt.show()
+    plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax, leak_node, step)
+    plot_cell_complex_flux(G, coords, selected_cycles, f_polygons_abs, vmin, vmax, leak_node, step)
+
+
 
     """
     while not done:
