@@ -243,53 +243,47 @@ def build_pyg_from_wntr(
     edge2idx = {name: i for i, name in enumerate(edge_names)}
     idx2edge = {i: name for name, i in edge2idx.items()}
 
-    #plot_current_network(wn, results, timestep_index)
-
     return data, node2idx, idx2node, edge2idx, idx2edge
 
 
-def plot_current_network(wn, results, timestep_index, show_names=False):
+def build_node_topo_features(G, B1, B2, f_polygons):
     """
-    Mostra la rete idrica attuale:
-    - Nodi colorati per pressione
-    - Tubi chiusi indicati da una X rossa al centro
-    (nessun colore custom, massima compatibilità)
+    Restituisce topo_feats: array [N_nodes, K] con:
+      - degree (grado del nodo in G)
+      - cycle_influence (flusso poligonale proiettato sui nodi)
+    Usa |B2| per proiettare flussi facce→spigoli e |B1|^T per spigoli→nodi.
+    Funziona se B1 è (E x N) o (N x E): lo rileva da solo.
     """
+    # --- shapes e valori assoluti per aggregazioni positive
+    B1 = np.array(B1)
+    B2 = np.array(B2)
+    f_polygons = np.array(f_polygons).reshape(-1, 1)  # [F,1] oppure [num_cycles,1]
 
-    pressures = results.node["pressure"].iloc[timestep_index]
+    # Determina dimensioni
+    n_nodes = G.number_of_nodes()
+    # edge_from_poly: [E,1] = |B2| @ |f_polygons|
+    edge_from_poly = np.abs(B2) @ np.abs(f_polygons)
 
-    plt.figure(figsize=(9, 7))
+    # Proiezione su nodi: se B1 è (E x N), usiamo |B1|^T @ edge; se è (N x E), usiamo |B1| @ edge
+    if B1.shape[0] == edge_from_poly.shape[0]:          # (E x N)
+        node_cycle_flux = (np.abs(B1).T @ edge_from_poly).reshape(-1)
+    elif B1.shape[1] == edge_from_poly.shape[0]:        # (N x E)
+        node_cycle_flux = (np.abs(B1)   @ edge_from_poly).reshape(-1)
+    else:
+        raise ValueError(f"B1 shape {B1.shape} incompatible with edges={edge_from_poly.shape[0]}")
 
-    # 🔹 Disegna la rete base (senza colorare i link)
-    wntr.graphics.network.plot_network(
-        wn,
-        node_attribute=pressures,
-        node_size=40,
-        node_range=[pressures.min(), pressures.max()],
-        add_colorbar=True,
-    )
+    # Controlla che la lunghezza sia giusta
+    if node_cycle_flux.shape[0] != n_nodes:
+        raise ValueError(f"node_cycle_flux len {node_cycle_flux.shape[0]} != n_nodes {n_nodes}")
 
-    # 🔹 Disegna una X rossa al centro di ciascun tubo chiuso
-    for pipe_name in wn.pipe_name_list:
-        pipe = wn.get_link(pipe_name)
-        if pipe.status != LinkStatus.Open:
-            u, v = pipe.start_node, pipe.end_node
-            x_mid = (u.coordinates[0] + v.coordinates[0]) / 2
-            y_mid = (u.coordinates[1] + v.coordinates[1]) / 2
-            plt.scatter(x_mid, y_mid, color="red", marker="x", s=100, zorder=5)
-            if show_names:
-                plt.text(x_mid + 5, y_mid + 5, pipe_name, color="red",
-                         fontsize=8, zorder=6)
+    # Feature semplici di centralità topologica (opzionali, ma utili)
+    deg = np.array([G.degree(n) for n in G.nodes()], dtype=float)
 
-    plt.title(f"Rete idrica al timestep {timestep_index}\n(rossa X = tubo chiuso)")
-    plt.axis("equal")
-    plt.show()
+    # Stack finale: [N, K]
+    topo_feats = np.stack([deg, node_cycle_flux], axis=1)
+    return topo_feats  # numpy
 
 
-def compute_topo_matrices(edge_index, num_nodes, max_cycle_len=10):
-    G = nx.Graph()
-    edges = edge_index.cpu().T.numpy()
-    G.add_nodes_from(range(num_nodes))
-    G.add_edges_from(edges)
-    B1, B2, _ = func_gen_B2_lu(G, max_cycle_len)
-    return torch.tensor(B1, dtype=torch.float32), torch.tensor(B2, dtype=torch.float32)
+
+
+
