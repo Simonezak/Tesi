@@ -86,14 +86,6 @@ def plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax,
                       annot_fontsize=9):
     """
     Plot the graph G with its selected cycle‐cells overlaid.
-
-    Args:
-      G               networkx.Graph
-      coords          np.ndarray of shape (n_nodes,2): (x,y) positions
-      selected_cycles list of cycles, each a list of node‐indices
-      f_polygons      (np.ndarray): [Ncycles x 1] flussi netti per ciclo
-      vmin, vmax      (float): limiti min e max per la colormap
-      leak_node_name  (str, opzionale): nome del nodo con perdita
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -143,7 +135,6 @@ def plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax,
                edgecolor=node_edgecolor,
                zorder=3)
             
-    # Nodo leak
     if leak_node is not None:
         x, y = leak_node.coordinates
         ax.scatter(x, y, color="red", s=node_size * 1.5, marker="o",
@@ -295,12 +286,6 @@ def plot_leak_probability(G, coords, leak_probs, leak_node=None,
                           edge_color='k', annotate=True, annot_fontsize=8):
     """
     Visualizza la probabilità di leak per ciascun nodo.
-
-    Args:
-        G             : networkx.Graph (grafo della rete)
-        coords        : np.ndarray (n_nodes, 2) coordinate [x, y]
-        leak_probs    : torch.Tensor o np.ndarray (n_nodes,)
-        leak_node     : nome o indice del nodo con perdita reale (opzionale)
     """
     import torch
 

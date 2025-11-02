@@ -146,8 +146,6 @@ def build_pyg_from_wntr(wn, results, cfg: GraphFeatureConfig = GraphFeatureConfi
     edge_index_list: List[Tuple[int, int]] = []
     edge_attrs: List[List[float]] = []
 
-    forward_edge_idx_for_pipe: List[int] = []
-
     df_flow = results.link.get("flowrate", None)
 
     lengths, diameters, flows, starts, ends, statuses = [], [], [], [], [], []
@@ -196,19 +194,6 @@ def build_pyg_from_wntr(wn, results, cfg: GraphFeatureConfig = GraphFeatureConfi
 def compute_topological_node_features(wn, results, max_cycle_length: int = 8, abs_flux: bool = False):
     """
     Calcola feature topologiche per nodo basate su B1, B2 e flussi poligonali.
-
-    Args:
-        wn : oggetto WaterNetworkModel di WNTR
-        results : risultati della simulazione WNTR (da sim.get_results())
-        max_cycle_length : lunghezza massima dei cicli da considerare
-        abs_flux : se True usa |f_polygons| (flusso assoluto)
-
-    Returns:
-        topo_feats : np.ndarray [N_nodes, 2]
-            colonna 0 = grado del nodo
-            colonna 1 = intensità del flusso ciclico
-        node_order : lista dei nomi dei nodi in ordine coerente con topo_feats
-        B1, B2 : matrici di incidenza (nodi–archi, archi–cicli)
     """
     # 1️⃣ Costruisci grafo da WNTR
     G, coords = build_nx_graph_from_wntr(wn, results)

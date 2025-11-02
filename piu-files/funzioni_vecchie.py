@@ -230,3 +230,93 @@ def step(self, action_index):
     print(self.current_step)
     done = self.current_step >= self.max_steps or self.sim.is_terminated()
     return next_state, reward, done, {}
+
+
+
+def run_GNN_topo_comparison(inp_path):
+    """
+    - genera i grafi PyG agli step 1..5
+    - allena entrambi i modelli su tutti gli step
+    - valuta e plotta a step 1 e step 5:
+        * plot_leak_probability (entrambi)
+        * plot_node_demand / plot_edge_flowrate / plot_cell_complex_flux (contesto)
+    """
+
+    # Parametri interni default
+    max_steps   = 5
+    epochs      = 50
+    lr          = 1e-3
+    hidden_dim  = 64
+    topo_proj   = 32
+    dropout     = 0.2
+
+    # 0) Setup ambiente + leak
+    print("\n=== 💧 Confronto GCN semplice vs GCN+TopoLayer ===")
+    env = WNTREnv(inp_path, max_steps=max_steps, hydraulic_timestep=3600)
+    env.reset(with_leak=True)
+    wn, sim = env.wn, env.sim
+    leak_name = env.leak_node_name
+    print(f"[INFO] Leak at node: {leak_name}")
+
+    # ---------------------------
+    # 1) Raccolta dataset (1..max_steps)
+    # ---------------------------
+    graphs = []      # Data PyG
+    labels = []      # y per-nodo
+    aux    = []      # (G, coords, results, B1,B2,f,f_polygons, node2idx, idx2node)
+
+    for step in range(1, max_steps + 1):
+        print(f"  > Sim step {step}/{max_steps}")
+        sim.step_sim()
+        results = sim.get_results()
+
+        data, node2idx, idx2node, edge2idx, idx2edge = build_pyg_from_wntr(wn, results)
+
+        # Label per-nodo
+        y = torch.zeros(data.num_nodes, 1, dtype=torch.float32)
+        if leak_name in node2idx:
+            y[node2idx[leak_name]] = 1.0
+        else:
+            print(f"[WARN] Leak node {leak_name} non presente nel grafo PyG allo step {step}")
+
+        graphs.append(data)
+        labels.append(y)
+
+        # Oggetti per i plot
+        G, coords = build_nx_graph_from_wntr(wn, results)
+        B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length=8)
+        f = construct_matrix_f(wn, results)
+        f_polygons = compute_polygon_flux(f, B2, False)
+
+        aux.append((G, coords, results, B1, B2, f, f_polygons, node2idx, idx2node))
+
+    # ---------------------------
+    # 2) Modelli
+    # ---------------------------
+    sample = graphs[0]
+    node_in_dim = sample.x.shape[1]
+    topo_in_dim = getattr(sample, "topo", None).shape[1] if hasattr(sample, "topo") and sample.topo is not None else 0
+
+    model_plain = GNNLeakDetector(node_in_dim=node_in_dim, hidden_dim=hidden_dim, dropout=dropout)
+    model_topo  = GNNLeakDetectorTopo(node_in_dim=node_in_dim, topo_in_dim=topo_in_dim,
+                                      hidden_dim=hidden_dim, topo_proj_dim=topo_proj, dropout=dropout)
+
+    opt_plain = torch.optim.Adam(model_plain.parameters(), lr=lr)
+    opt_topo  = torch.optim.Adam(model_topo.parameters(),  lr=lr)
+    loss_fn = nn.BCELoss()
+
+    # ---------------------------
+    # 3) Training (stessa procedura per entrambi)
+    # ---------------------------
+
+    print("\n[TRAIN] GCN semplice")
+    train_model(model_plain, opt_plain, graphs, labels, epochs=epochs, name="GCN")
+
+    print("\n[TRAIN] GCN + TopoLayer")
+    train_model(model_topo,  opt_topo,  graphs, labels, epochs=epochs, name="GCN+Topo")
+
+    # ---------------------------
+    # 4) Valutazione & Plot a step 1 e 5
+    # ---------------------------
+
+    return model_plain, model_topo, graphs
