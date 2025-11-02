@@ -75,7 +75,7 @@ def construct_matrix_f(wn, results):
 # d'altra parte, osservare il grafico dei valori assoluti dei poligoni può essere utile perchè
 # può visuallizzare quali sono i poligoni in cui scorre più acqua in un certo istante di tempo all'interno del water network
 def plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax,
-                      leak_node=None, step=None,
+                      leak_node=None, episode=None, step=None, test=False,
                       figsize=(8,8),
                       cmap='plasma',
                       edge_color='k',
@@ -156,7 +156,9 @@ def plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax,
     fig.colorbar(sm, ax=ax, label="Flusso netto per poligono [m³/s]")
 
     # --- Titolo e stile ---
-    ax.set_title(f"Flowrate poligoni - step {step}" if step is not None else "Flowrate poligoni")
+    ax.set_title(f"Flowrate poligoni - Episodio {episode}, step {step}" if step is not None else "Flowrate poligoni")
+    if test:
+        ax.set_title(f"TEST WN - Flowrate poligoni")
     ax.set_aspect("equal")
     ax.axis("off")
     plt.tight_layout()
@@ -166,8 +168,8 @@ def plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax,
 
 
 def plot_node_demand(G, coords, vmin, vmax, figsize=(8,8), cmap='coolwarm', node_size=60,
-                     edge_color='k', node_edgecolor='none', annotate=True, annot_fontsize=8,
-                     step=None):
+                     edge_color='k', node_edgecolor='none', annotate=True, annot_fontsize=8, episode=None,
+                     step=None, test=False):
     """
     Visualizza il grafo con i nodi colorati in base alla demand.
     """
@@ -213,7 +215,10 @@ def plot_node_demand(G, coords, vmin, vmax, figsize=(8,8), cmap='coolwarm', node
     fig.colorbar(sm, ax=ax, label="Demand")
 
     # Titolo e stile
-    ax.set_title(f"Nodes Demand - step {step}" if step else "Nodes Demand")
+    ax.set_title(f"Nodes Demand - Episodio {episode}, step {step}" if step else "Nodes Demand")
+    if test:
+        ax.set_title(f"TEST WN - Nodes Demand")
+
     ax.set_aspect("equal")
     ax.axis("off")
     plt.tight_layout()
@@ -228,8 +233,8 @@ def plot_edge_flowrate(G, coords, f, vmin, vmax,
                        cmap='coolwarm',
                        node_size=40,
                        annotate=True,
-                       annot_fontsize=8,
-                       step=None):
+                       annot_fontsize=8, episode=None,
+                       step=None, test=False):
     """
     Visualizza il grafo con gli archi colorati in base al flowrate normalizzato.
     """
@@ -270,8 +275,12 @@ def plot_edge_flowrate(G, coords, f, vmin, vmax,
     fig.colorbar(sm, ax=ax, label="Flowrate")
 
     # Titolo e stile
-    ax.set_title(f"Flowrate negli archi - step {step}" if step else "Flowrate negli archi",
+    ax.set_title(f"Flowrate negli archi - Episodio {episode}, step {step}" if step else "Flowrate negli archi",
                  fontsize=11)
+    if test:
+        ax.set_title(f"TEST WN - Flowrate archi")
+    
+    
     ax.set_aspect("equal")
     ax.axis("off")
     plt.tight_layout()
@@ -367,3 +376,5 @@ def compute_polygon_flux(f, B2, abs: bool = False):
     f_polygons = B2.T @ f
 
     return f_polygons
+
+

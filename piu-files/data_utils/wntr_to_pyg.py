@@ -7,14 +7,12 @@ import torch
 import numpy as np
 import pandas as pd
 from torch_geometric.data import Data
-from wntr.network.elements import LinkStatus
+from wntr.network.elements import LinkStatus, Junction
 from main_dyn_topologyknown_01 import func_gen_B2_lu
+from topological import compute_polygon_flux, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits
+
 import networkx as nx
 
-
-import numpy as np
-import networkx as nx
-import wntr
 
 def build_nx_graph_from_wntr(wn, results=None, timestep_index=-1):
     """
@@ -75,7 +73,6 @@ def build_nx_graph_from_wntr(wn, results=None, timestep_index=-1):
         length = float(getattr(pipe, "length", 0.0))
         diameter = float(getattr(pipe, "diameter", 0.0))
         flow = float(df_flow.iloc[timestep_index][pipe_name]) if df_flow is not None else 0.0
-        status = 1.0 if pipe.status == wntr.network.elements.LinkStatus.Open else 0.0
 
         G.add_edge(
             start,
@@ -83,13 +80,13 @@ def build_nx_graph_from_wntr(wn, results=None, timestep_index=-1):
             pipe_name=pipe_name,
             length=length,
             diameter=diameter,
-            flowrate=flow,
-            open_mask=status,
+            flowrate=flow
         )
 
     # ===============================
     # 4️⃣ Coordinate e compatibilità con func_gen_B2_lu
     # ===============================
+
     # mappatura interna per i cicli topologici
     mapping = {name: i for i, name in enumerate(G.nodes())}
     G = nx.relabel_nodes(G, mapping, copy=True)
@@ -106,13 +103,6 @@ def build_nx_graph_from_wntr(wn, results=None, timestep_index=-1):
 
 
 
-
-
-
-
-
-
-
 @dataclass
 class GraphFeatureConfig:
     node_features: Tuple[str, ...] = ("elevation", "demand", "pressure", "leak_demand")
@@ -120,7 +110,7 @@ class GraphFeatureConfig:
     undirected: bool = True
 
 
-def safe_get(df, timestep_index, col, default=0.0):
+def safe_get(df, col, default=0.0):
     """Legge in modo sicuro un valore da un DataFrame dei risultati (anche se parziale)."""
     if df is None or col not in df.columns or len(df) == 0:
         return default
@@ -129,21 +119,11 @@ def safe_get(df, timestep_index, col, default=0.0):
         return float(df.iloc[-1][col])
     except Exception:
         return default
-    
 
-def build_pyg_from_wntr(
-    wn,
-    results,
-    timestep_index: int,
-    cfg: GraphFeatureConfig = GraphFeatureConfig(),
-):
-    import numpy as np
-    import pandas as pd
-    from torch_geometric.data import Data
-    from wntr.network.elements import Junction, LinkStatus
 
+def build_pyg_from_wntr(wn, results, cfg: GraphFeatureConfig = GraphFeatureConfig()):
     # ---- nodi ----
-    node_names: List[str] = [name for name, _ in wn.nodes()]  # includi TUTTI i nodi
+    node_names: List[str] = [name for name, _ in wn.nodes()]
     node2idx = {name: i for i, name in enumerate(node_names)}
     idx2node = {i: name for name, i in node2idx.items()}
 
@@ -156,19 +136,17 @@ def build_pyg_from_wntr(
     for name in node_names:
         n = wn.get_node(name)
         elev.append(float(getattr(n, "elevation", 0.0)))
-        demand.append(safe_get(df_demand, timestep_index, name))
-        pressure.append(safe_get(df_pressure, timestep_index, name))
-        leak_dem.append(safe_get(df_leak, timestep_index, name))
+        demand.append(safe_get(df_demand, name))
+        pressure.append(safe_get(df_pressure, name))
+        leak_dem.append(safe_get(df_leak, name))
         x = np.stack([elev, demand, pressure, leak_dem], axis=1)
         x_torch = torch.tensor(x, dtype=torch.float32)
 
     # ---- archi (pipes) ----
     edge_index_list: List[Tuple[int, int]] = []
     edge_attrs: List[List[float]] = []
-    edge_names: List[str] = []
 
-    forward_edge_idx_for_pipe: List[int] = []  # mapping pipe_id -> edge_index (direzione forward)
-    pipe_names: List[str] = []
+    forward_edge_idx_for_pipe: List[int] = []
 
     df_flow = results.link.get("flowrate", None)
 
@@ -181,109 +159,130 @@ def build_pyg_from_wntr(
         if u_name not in node2idx or v_name not in node2idx:
             continue
 
-        # controlla stato (solo se pipe aperta)
-        if pipe.status != LinkStatus.Open:
-            continue
-        status = 1.0 if pipe.status == LinkStatus.Open else 0.0
-
         u, v = node2idx[u_name], node2idx[v_name]
         length = float(getattr(pipe, "length", 0.0))
         diameter = float(getattr(pipe, "diameter", 0.0))
-        flow = safe_get(df_flow, timestep_index, pipe_name)
+        flow = safe_get(df_flow, pipe_name)
 
         # aggiungi forward edge
-        forward_idx = len(edge_index_list)
         edge_index_list.append((u, v))
         edge_attrs.append([length, diameter, flow])
-        edge_names.append(pipe_name)
-        forward_edge_idx_for_pipe.append(forward_idx)
-        pipe_names.append(pipe_name)
 
         lengths.append(length)
         diameters.append(diameter)
         flows.append(flow)
         starts.append(u_name)
         ends.append(v_name)
-        statuses.append(status)
 
         # se grafo non orientato, aggiungi anche reverse
         if cfg.undirected:
             edge_index_list.append((v, u))
             edge_attrs.append([length, diameter, flow])
-            edge_names.append(f"{pipe_name}__rev")
 
-    all_pipes = wn.pipe_name_list   
-    pipe_edge_idx = []
-    pipe_open_mask = []
-
-    for pipe_name in all_pipes:
-        pipe = wn.get_link(pipe_name)
-        # Trova se il tubo compare nel grafo (solo se era aperto)
-        if pipe_name in edge_names:
-            idx = edge_names.index(pipe_name)
-            pipe_edge_idx.append(idx)
-            pipe_open_mask.append(1.0)  # tubo aperto e presente nel grafo
-        else:
-            pipe_edge_idx.append(-1)    # tubo chiuso, nessun arco nel grafo
-            pipe_open_mask.append(0.0)  # 0 = chiuso, ma azione ancora possibile
-
+     
     # ---- costruisci Data PyG ----
     edge_index = torch.tensor(np.array(edge_index_list, dtype=np.int64).T, dtype=torch.long)
     edge_attr = torch.tensor(np.array(edge_attrs, dtype=np.float32), dtype=torch.float32)
 
     data = Data(x=x_torch, edge_index=edge_index, edge_attr=edge_attr)
-    data.num_nodes = x.shape[0]
 
-    # campi extra
-    data.pipe_edge_idx = torch.tensor(pipe_edge_idx, dtype=torch.long)
-    data.pipe_open_mask = torch.tensor(pipe_open_mask, dtype=torch.float32)
-    data.pipe_names = all_pipes
-    data.num_pipes = len(forward_edge_idx_for_pipe)
-
+    edge_names = wn.pipe_name_list
     edge2idx = {name: i for i, name in enumerate(edge_names)}
     idx2edge = {i: name for name, i in edge2idx.items()}
 
     return data, node2idx, idx2node, edge2idx, idx2edge
 
 
-def build_node_topo_features(G, B1, B2, f_polygons):
+def compute_topological_node_features(wn, results, max_cycle_length: int = 8, abs_flux: bool = False):
     """
-    Restituisce topo_feats: array [N_nodes, K] con:
-      - degree (grado del nodo in G)
-      - cycle_influence (flusso poligonale proiettato sui nodi)
-    Usa |B2| per proiettare flussi facce→spigoli e |B1|^T per spigoli→nodi.
-    Funziona se B1 è (E x N) o (N x E): lo rileva da solo.
-    """
-    # --- shapes e valori assoluti per aggregazioni positive
-    B1 = np.array(B1)
-    B2 = np.array(B2)
-    f_polygons = np.array(f_polygons).reshape(-1, 1)  # [F,1] oppure [num_cycles,1]
+    Calcola feature topologiche per nodo basate su B1, B2 e flussi poligonali.
 
-    # Determina dimensioni
-    n_nodes = G.number_of_nodes()
-    # edge_from_poly: [E,1] = |B2| @ |f_polygons|
+    Args:
+        wn : oggetto WaterNetworkModel di WNTR
+        results : risultati della simulazione WNTR (da sim.get_results())
+        max_cycle_length : lunghezza massima dei cicli da considerare
+        abs_flux : se True usa |f_polygons| (flusso assoluto)
+
+    Returns:
+        topo_feats : np.ndarray [N_nodes, 2]
+            colonna 0 = grado del nodo
+            colonna 1 = intensità del flusso ciclico
+        node_order : lista dei nomi dei nodi in ordine coerente con topo_feats
+        B1, B2 : matrici di incidenza (nodi–archi, archi–cicli)
+    """
+    # 1️⃣ Costruisci grafo da WNTR
+    G, coords = build_nx_graph_from_wntr(wn, results)
+
+    # 2️⃣ Calcola matrici topologiche (boundary operators)
+    B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length=max_cycle_length)
+
+    # 3️⃣ Costruisci matrice di flussi f sugli archi
+    f = construct_matrix_f(wn, results)
+
+    # 4️⃣ Calcola flussi sui poligoni (celle 2D)
+    f_polygons = compute_polygon_flux(f, B2, abs=abs_flux)
+
+    # 5️⃣ Propagazione cicli→archi→nodi
     edge_from_poly = np.abs(B2) @ np.abs(f_polygons)
-
-    # Proiezione su nodi: se B1 è (E x N), usiamo |B1|^T @ edge; se è (N x E), usiamo |B1| @ edge
-    if B1.shape[0] == edge_from_poly.shape[0]:          # (E x N)
+    if B1.shape[0] == edge_from_poly.shape[0]:
         node_cycle_flux = (np.abs(B1).T @ edge_from_poly).reshape(-1)
-    elif B1.shape[1] == edge_from_poly.shape[0]:        # (N x E)
-        node_cycle_flux = (np.abs(B1)   @ edge_from_poly).reshape(-1)
+    elif B1.shape[1] == edge_from_poly.shape[0]:
+        node_cycle_flux = (np.abs(B1) @ edge_from_poly).reshape(-1)
     else:
-        raise ValueError(f"B1 shape {B1.shape} incompatible with edges={edge_from_poly.shape[0]}")
+        raise ValueError(f"[TopoFeatures] B1 shape {B1.shape} incompatible with edges {edge_from_poly.shape[0]}")
 
-    # Controlla che la lunghezza sia giusta
-    if node_cycle_flux.shape[0] != n_nodes:
-        raise ValueError(f"node_cycle_flux len {node_cycle_flux.shape[0]} != n_nodes {n_nodes}")
-
-    # Feature semplici di centralità topologica (opzionali, ma utili)
+    # 6️⃣ Grado dei nodi (local centrality)
     deg = np.array([G.degree(n) for n in G.nodes()], dtype=float)
 
-    # Stack finale: [N, K]
+    # 7️⃣ Stack finale [N,2]
     topo_feats = np.stack([deg, node_cycle_flux], axis=1)
-    return topo_feats  # numpy
+    node_order = list(G.nodes())
+
+    return topo_feats, node_order, B1, B2
 
 
 
 
+def visualize_snapshot(all_snapshots, episode_id, step, wn, results):
+    """
+    Visualizza lo stato WN corrispondente a uno snapshot specifico
+    """
+
+    # Trova lo snapshot corrispondente
+    snap = next(
+        (d for d in all_snapshots
+         if getattr(d, "episode_id", None) == episode_id
+         and getattr(d, "step", None) == step),
+        None
+    )
+    if snap is None:
+        print(f"[ERRORE] Nessuno snapshot trovato per episodio={episode_id}, step={step}")
+        return
+
+    # Ricostruisci grafo e calcola grandezze topologiche
+    G, coords = build_nx_graph_from_wntr(wn, results)
+    B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length=8)
+
+    f = construct_matrix_f(wn, results)
+    f_polygons = compute_polygon_flux(f, B2, abs=False)
+    f_polygons_abs = compute_polygon_flux(f, B2, abs=True)
+
+    # Limiti per le scale colore
+    vmin_p, vmax_p = get_inital_polygons_flux_limits(f_polygons)
+    vmin_n, vmax_n = get_initial_node_demand_limits(G)
+    vmin_e, vmax_e = get_initial_edge_flow_limits(f)
+
+    # Individua il nodo di leak dallo snapshot (etichetta y=1)
+    leak_idx = (snap.y.squeeze() == 1).nonzero(as_tuple=True)[0]
+    leak_node = None
+    if len(leak_idx) > 0:
+        leak_node_name = list(G.nodes())[int(leak_idx[0])]
+        leak_node = wn.get_node(leak_node_name)
+        print(f"[INFO] Leak al nodo: {leak_node_name}")
+
+    print(f"\n Visualizzazione episodio={episode_id}, step={step}")
+    plot_node_demand(G, coords, vmin_n, vmax_n, episode=episode_id, step=step)
+    plot_edge_flowrate(G, coords, f, vmin_e, vmax_e, episode=episode_id, step=step)
+    plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin_p, vmax_p, leak_node, episode=episode_id, step=step)
+    plot_cell_complex_flux(G, coords, selected_cycles, f_polygons_abs, vmin_p, vmax_p, leak_node, episode=episode_id, step=step)
 
