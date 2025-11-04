@@ -175,7 +175,7 @@ def run_GNN_topo_comparison_multi(inp_path):
     """
 
     num_episodes=3
-    max_steps=5
+    max_steps=8
     lr=1e-3
     epochs=50
 
@@ -231,6 +231,11 @@ def run_GNN_topo_comparison_multi(inp_path):
             #print(f"[EP{ep} STEP{step}] data keys: {list(data.keys())}")
 
             all_snapshots.append(data)
+        
+        #sim.plot_results("node", "demand")
+        sim.plot_network_over_time("demand", "flowrate")
+
+
 
     visualize_snapshot(all_snapshots, episode_id=2, step=1, wn=wn, results=results)
 
@@ -328,5 +333,5 @@ def run_GNN_topo_comparison_multi(inp_path):
 
 
 if __name__ == "__main__":
-    run_GNN_topo_comparison_multi(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin.inp")
+    run_GNN_topo_comparison_multi(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy.inp")
 

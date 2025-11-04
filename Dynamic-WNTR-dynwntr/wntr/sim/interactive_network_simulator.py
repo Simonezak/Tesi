@@ -661,7 +661,7 @@ class InteractiveWNTRSimulator(wntr.sim.WNTRSimulator):
             font=dict(
                 # You can choose a font that inherently includes a bold style, such as "Arial Black"
                 #family="Arial Black",
-                weight="bold",
+                #weight="bold",
                 size=23  # Make fonts larger
             )
         )
@@ -1037,7 +1037,7 @@ class InteractiveWNTRSimulator(wntr.sim.WNTRSimulator):
             font=dict(
                 # You can choose a font that inherently includes a bold style, such as "Arial Black"
                 #family="Arial Black",
-                weight="bold",
+                #weight="bold",
                 size=23  # Make fonts larger
             ),
             xaxis=dict(

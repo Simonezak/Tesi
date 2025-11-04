@@ -55,7 +55,7 @@ class GNNLeakDetector(nn.Module):
             return (probs > threshold).float(), probs
 
 
-def train_model(model, optimizer, graphs, loss_fn=None, epochs=50, name="model"):
+def train_model(model, optimizer, graphs, loss_fn=nn.BCELoss(), epochs=50, name="model"):
     """
     Allena un modello GNN supervisionato su una lista di grafi PyG.
 
@@ -68,11 +68,8 @@ def train_model(model, optimizer, graphs, loss_fn=None, epochs=50, name="model")
         epochs: numero di epoche
         name: stringa descrittiva (per logging)
     """
-    
-    if loss_fn is None:
-        loss_fn = nn.BCELoss()
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(0, epochs):
         total_loss = 0.0
         model.train()
 
