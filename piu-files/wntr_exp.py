@@ -234,6 +234,7 @@ def run_GNN_topo_comparison_multi(inp_path):
         
         #sim.plot_results("node", "demand")
         sim.plot_network_over_time("demand", "flowrate")
+        #pepris
 
 
 
