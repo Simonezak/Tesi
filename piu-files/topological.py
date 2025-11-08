@@ -363,3 +363,139 @@ def compute_polygon_flux(f, B2, abs: bool = False):
     return f_polygons
 
 
+def row_normalize(A, eps=1e-9):
+    s = np.abs(A).sum(axis=1, keepdims=True) + eps
+    return A / s
+
+def build_L1_and_M(B1, B2, alpha=0.1):
+    L1 = B1.T @ B1 + B2 @ B2.T
+    L1n = row_normalize(L1)
+    E = L1.shape[0]
+    M = np.eye(E) - alpha * L1n
+    return L1, L1n, M
+
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_edge_Uhat(G, coords, U_hat, vmin=None, vmax=None, cmap="coolwarm", step=None):
+    """
+    Plotta il valore U_hat sugli archi per un singolo step (stile identico a plot_edge_flowrate).
+    Mostra:
+      - nodi come punti neri
+      - archi colorati in base al valore di U_hat
+      - testo con il valore numerico al centro dell'arco
+    """
+    # --- Conversione a NumPy
+    U_np = U_hat.detach().cpu().numpy().flatten() if hasattr(U_hat, "detach") else np.array(U_hat).flatten()
+    edges = list(G.edges())
+
+    # --- Range colori automatico
+    if vmin is None: vmin = np.min(U_np)
+    if vmax is None: vmax = np.max(U_np)
+
+    norm = plt.Normalize(vmin, vmax)
+    cmap_obj = plt.cm.get_cmap(cmap)
+
+    plt.figure(figsize=(7,6))
+    ax = plt.gca()
+
+    # --- Disegna archi colorati
+    for i, (u, v) in enumerate(edges):
+        x1, y1 = coords[u]
+        x2, y2 = coords[v]
+        color = cmap_obj(norm(U_np[i]))
+        ax.plot([x1, x2], [y1, y2], color=color, linewidth=3, zorder=1)
+
+        # testo del valore numerico (al centro del tubo)
+        mid_x = (x1 + x2) / 2
+        mid_y = (y1 + y2) / 2
+        ax.text(mid_x, mid_y, f"{U_np[i]:.3f}", color="black", fontsize=8,
+                ha="center", va="center", zorder=3)
+
+    # --- Nodi come punti neri
+    nx.draw_networkx_nodes(G, coords, node_size=40, node_color="black", ax=ax)
+
+    # --- Colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label("U_hat (anomalia flusso)")
+
+    title = f"U_hat per step {step}" if step is not None else "U_hat (anomalia flusso)"
+    ax.set_title(title)
+    ax.set_axis_off()
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_edge_s_u(G, coords, s_u, vmin=None, vmax=None, cmap="plasma", leak_node=None):
+    """
+    Plotta la mappa finale s_u(i) = sum_k |U_i[k]| su tutti gli archi,
+    con nodi neri, testo dei valori e un nodo rosso che indica il leak.
+
+    Args:
+        G: networkx.Graph
+        coords: dict {node: (x, y)} coordinate dei nodi
+        s_u: torch.Tensor o np.ndarray (E,)
+        vmin, vmax: limiti per la colorbar (calcolati automaticamente se None)
+        cmap: colormap matplotlib (default "plasma")
+        leak_node: nome del nodo dove c'è il leak (stringa)
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import networkx as nx
+
+    # --- Conversione robusta
+    if hasattr(s_u, "detach"):
+        s_u_np = s_u.detach().cpu().numpy()
+    elif isinstance(s_u, (list, tuple)):
+        s_u_np = np.array(s_u)
+    else:
+        s_u_np = np.array(s_u)
+    s_u_np = s_u_np.flatten()
+    edges = list(G.edges())
+
+    # --- Range colori
+    if vmin is None: vmin = float(np.min(s_u_np))
+    if vmax is None: vmax = float(np.max(s_u_np))
+
+    norm = plt.Normalize(vmin, vmax)
+    cmap_obj = plt.cm.get_cmap(cmap)
+
+    plt.figure(figsize=(7, 6))
+    ax = plt.gca()
+
+    # --- Disegna archi colorati
+    for i, (u, v) in enumerate(edges):
+        x1, y1 = coords[u]
+        x2, y2 = coords[v]
+        color = cmap_obj(norm(s_u_np[i]))
+        ax.plot([x1, x2], [y1, y2], color=color, linewidth=3, zorder=1)
+
+        # testo del valore numerico al centro
+        mid_x = (x1 + x2) / 2
+        mid_y = (y1 + y2) / 2
+        ax.text(mid_x, mid_y, f"{s_u_np[i]:.3f}", color="black", fontsize=8,
+                ha="center", va="center", zorder=3)
+
+    # --- Nodi normali (neri)
+    nx.draw_networkx_nodes(G, coords, node_size=40, node_color="black", ax=ax)
+
+    # --- Nodo del leak (rosso + testo)
+    if leak_node is not None:
+        x_leak, y_leak = coords[leak_node]
+        ax.scatter(x_leak, y_leak, s=120, color="red", edgecolors="black", zorder=4)
+        ax.text(x_leak + 0.5, y_leak + 0.2, f"Leak: {leak_node}", color="red",
+                fontsize=10, fontweight="bold", ha="left", va="center", zorder=5)
+
+    # --- Colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label(r"$s_u = \sum_k |U[k]|$")
+    ax.set_title("Mappa finale s_u (intensità anomalia)")
+    ax.set_axis_off()
+    plt.tight_layout()
+    plt.show()

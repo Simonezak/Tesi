@@ -105,9 +105,10 @@ def build_nx_graph_from_wntr(wn, results=None, timestep_index=-1):
 
 @dataclass
 class GraphFeatureConfig:
-    node_features: Tuple[str, ...] = ("elevation", "demand", "pressure", "leak_demand")
+    node_features: Tuple[str, ...] = ("elevation", "pressure")
     edge_features: Tuple[str, ...] = ("length", "diameter", "flowrate")
-    undirected: bool = True
+    undirected: bool = False
+
 
 
 def safe_get(df, col, default=0.0):
@@ -270,4 +271,65 @@ def visualize_snapshot(all_snapshots, episode_id, step, wn, results):
     plot_edge_flowrate(G, coords, f, vmin_e, vmax_e, episode=episode_id, step=step)
     plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin_p, vmax_p, leak_node, episode=episode_id, step=step)
     plot_cell_complex_flux(G, coords, selected_cycles, f_polygons_abs, vmin_p, vmax_p, leak_node, episode=episode_id, step=step)
+
+from torch_geometric.data import Data
+from topological import build_L1_and_M
+from main_dyn_topologyknown_01 import func_gen_B2_lu
+
+def build_pyg_time_series(wn, results, alpha=0.1, max_cycle_length=7):
+    """
+    Converte i risultati WNTR in una lista di grafi PyG (uno per step temporale),
+    con B1, B2 e M fissi (topologia costante).
+    """
+    # Costruisci il grafo topologico (solo connessioni)
+    G = nx.Graph()
+    for link_name, link in wn.links():
+        G.add_edge(link.start_node_name, link.end_node_name)
+
+    node_order = list(G.nodes())
+    edge_order = list(G.edges())
+
+    # Ottieni B1, B2 dalla funzione topologica esistente
+    B1_np, B2_np, selected_cycles = func_gen_B2_lu(G, max_cycle_length=max_cycle_length)
+
+    # Costruisci L1 e M (propagatore dinamico)
+    _, _, M_np = build_L1_and_M(B1_np, B2_np, alpha=alpha)
+
+    # Converti tutti i tempi WNTR in snapshot PyG
+    all_snapshots = []
+    for t_idx in range(len(results.time)):
+        flow_t = []
+        df_flow = results.link["flowrate"]
+
+        for (u, v) in edge_order:
+            name1 = f"{u}-{v}"
+            name2 = f"{v}-{u}"
+            if name1 in df_flow.columns:
+                flow_t.append(df_flow.iloc[t_idx][name1])
+            elif name2 in df_flow.columns:
+                flow_t.append(df_flow.iloc[t_idx][name2])
+            else:
+                flow_t.append(0.0)
+
+        flow_t = np.array(flow_t, dtype=float)
+
+        # edge_index coerente
+        node_to_idx = {n: i for i, n in enumerate(node_order)}
+        edge_index = torch.tensor([[node_to_idx[u] for (u, v) in edge_order],
+                                   [node_to_idx[v] for (u, v) in edge_order]], dtype=torch.long)
+
+        # crea Data PyG
+        data = Data()
+        data.edge_index = edge_index
+        data.edge_flow = torch.from_numpy(flow_t).float().view(-1, 1)
+        data.B1 = torch.from_numpy(B1_np).float()
+        data.B2 = torch.from_numpy(B2_np).float()
+        data.M = torch.from_numpy(M_np).float()
+        data.edge_order = edge_order
+        data.node_order = node_order
+
+        all_snapshots.append(data)
+
+    return all_snapshots
+
 

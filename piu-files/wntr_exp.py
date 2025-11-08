@@ -7,9 +7,12 @@ import matplotlib.pyplot as plt
 
 from data_utils.wntr_to_pyg import build_pyg_from_wntr, build_nx_graph_from_wntr, compute_topological_node_features, visualize_snapshot
 from main_dyn_topologyknown_01 import func_gen_B2_lu
-from topological import compute_polygon_flux, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability
+from topological import compute_polygon_flux, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability, build_L1_and_M, row_normalize
 from GNN_LD import GNNLeakDetector, train_model
 from GNN_TopoLD import GNNLeakDetectorTopo
+from GNN_LD import TopoDynamicUEstimator
+from data_utils.wntr_to_pyg import build_pyg_time_series
+
 
 import wntr
 from wntr.sim.interactive_network_simulator import InteractiveWNTRSimulator
@@ -234,7 +237,6 @@ def run_GNN_topo_comparison_multi(inp_path):
         
         #sim.plot_results("node", "demand")
         sim.plot_network_over_time("demand", "flowrate")
-        #pepris
 
 
 
@@ -333,6 +335,210 @@ def run_GNN_topo_comparison_multi(inp_path):
     plot_leak_probability(G, coords, preds_topo, node2idx[leak_node.name])
 
 
+def run_GNN_UdiK(inp_path):
+    """
+
+    """
+
+    num_episodes=3
+    max_steps=8
+    lr=1e-3
+    epochs=50
+
+    alpha = 0.1
+    tau = 0.002
+
+    # Questa lista conterrà tutti gli snapshot di tutti gli episodi
+    all_snapshots = []
+    all_demands = []
+    all_leak_demands = []
+    all_flowrates = []
+
+    # Istanziamento Ambiente
+    env = WNTREnv(inp_path, max_steps=max_steps, hydraulic_timestep=3600)
+    
+    print(f"Inizializzato GNN. \nNumero Episodi: {num_episodes} \nNumero Step: {max_steps} \n\n")
+
+    # Loop Episodi
+    for ep in range(num_episodes):
+        print(f"Episodio {ep+1}/{num_episodes}")
+
+        # Reset ambiente e Leak
+        env.reset(with_leak=True)
+        wn, sim = env.wn, env.sim
+        leak_node = env.leak_node_name
+
+        print(f"Leak al nodo: {leak_node}")
+
+        results = sim.get_results()
+        G, coords = build_nx_graph_from_wntr(wn, results)
+        B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length=8)
+        L1, L1n, M = build_L1_and_M(B1, B2, alpha=alpha)
+
+        episode_demands = []
+        episode_leak_demands = []
+        episode_flowrates = []
+
+        all_U = []     # lista di episodi; ogni elemento = lista di U[k] (torch [E,1])
+        all_s_u = []   # score accumulato per ogni arco
+
+        from topological import plot_edge_s_u, plot_edge_Uhat
+
+        # Loop degli step della simulazione
+        for step in range(max_steps):
+
+            sim.step_sim()
+            results = sim.get_results()
+
+            data, node2idx, idx2node, edge2idx, idx2edge = build_pyg_from_wntr(wn, results)
+            
+            node_features = data.x.cpu().numpy()
+            demands = node_features[:, 1].tolist()      
+            leak_demands = node_features[:, 3].tolist()
+
+            edge_features = data.edge_attr.cpu().numpy()
+            flowrates = edge_features[:, 2].tolist()      # flowrate per tubo   
+
+            episode_demands.append(demands)
+            episode_leak_demands.append(leak_demands)
+            episode_flowrates.append(flowrates)
+            
+            # Label: 1 solo sul nodo del leak
+            y = torch.zeros(data.num_nodes, 1)
+            if leak_node in node2idx:
+                y[node2idx[leak_node]] = 1.0
+            else:
+                print(f"Step {step}, Leak node {leak_node} non presente nel grafo")
+            
+            data.y = y
+            data.episode_id = ep
+            data.step = step
+
+            """
+
+            Ci sono un sacco di variabili ma l'importante è che vengano prese solo quelle
+            giuste dal modello per il training e non cose come l'episode_id altrimenti overfitta
+            """
+
+            #print(f"[EP{ep} STEP{step}] data keys: {list(data.keys())}")
+
+            all_snapshots.append(data)
+            all_demands.append(episode_demands)
+            all_leak_demands.append(episode_leak_demands)
+            all_flowrates.append(episode_flowrates)
+        
+
+        for step in range(max_steps - 1):
+            xk  = episode_flowrates[step]
+            xk1 = episode_flowrates[step + 1]
+            
+            # residuo dinamico
+            z = xk1 - (M @ xk)
+
+            z = torch.as_tensor(z, dtype=torch.float32)
+
+            # sparsificazione e vincolo di segno come nel paper
+            soft = torch.sign(-z) * torch.clamp((-z).abs() - tau, min=0.0)
+            U_hat = -torch.relu(soft)
+
+            #plot_edge_Uhat(G, coords, U_hat, cmap="coolwarm", step=step)
+
+            # Qua vengono aggiunte alla lista le U per ogni step
+            all_U.append(U_hat)
+   
+        # qua viene fatta la sommatoria di tutte le U di tutti gli step
+        # accumulo temporale s_u(i) = sum_k |U_i[k]| è la sommatoria nei vari tempi
+        s_u = torch.stack([u.abs() for u in all_U], dim=0).sum(dim=0).view(-1)
+        
+        # principalmente per debug
+        all_s_u.append(s_u)
+        
+
+        plot_edge_s_u(G, coords, s_u, cmap="plasma", leak_node=leak_node)
+
+        K = 3
+        vals, idx = torch.topk(s_u, k=K)
+        print("=== TOP-K archi sospetti (U accumulato) ===")
+        for j, i in enumerate(idx.tolist()):
+            print(f"Edge {idx2edge[i]}: score={vals[j]:.4f}")
+
+        #sim.plot_results("node", "demand")
+        #sim.plot_network_over_time("demand", "flowrate")
+
+    #
+    # TESTING
+    #
+
+    def _soft_shrink_neg(z: torch.Tensor, tau: float) -> torch.Tensor:
+        # U_hat = -ReLU( soft(-(z), tau) )
+        s = torch.sign(-z) * torch.clamp((-z).abs() - tau, min=0.0)
+        return -torch.relu(s)
+
+    print("\n=== Valutazione modello UdiK (unsupervised, edge-based) ===")
+    # nuovo episodio con leak
+    env.reset(with_leak=True)
+    wn, sim = env.wn, env.sim
+    leak_node = env.leak_node_name
+    print(f"Leak al nodo: {leak_node}")
+
+    # topologia fissa dell'episodio di test
+    results0 = sim.get_results()
+    G_test, coords_test = build_nx_graph_from_wntr(wn, results0)
+    B1_test, B2_test, _ = func_gen_B2_lu(G_test, max_cycle_length=8)
+    _, _, M_test = build_L1_and_M(B1_test, B2_test, alpha=alpha)
+    M_test = torch.from_numpy(M_test).float()
+
+    # raccogliamo mapping e x[k] con build_pyg_from_wntr per garantire ordine coerente
+    X_test = []           # lista di (E,1)
+    idx2edge_ref = None
+    idx2node_ref = None
+
+    for step in range(max_steps):
+        sim.step_sim()
+        results = sim.get_results()
+
+        data, node2idx, idx2node, edge2idx, idx2edge = build_pyg_from_wntr(wn, results)
+
+        if idx2edge_ref is None:
+            idx2edge_ref = idx2edge
+        if idx2node_ref is None:
+            idx2node_ref = idx2node
+
+        # x[k] dai flow degli archi (adatta FLOW_COL se servisse)
+        if hasattr(data, "edge_flow") and data.edge_flow is not None:
+            xk = data.edge_flow.view(-1, 1).clone().float()
+        else:
+            FLOW_COL = 2  # se il flow è in edge_attr[:,2]
+            xk = data.edge_attr[:, FLOW_COL].view(-1, 1).clone().float()
+
+        X_test.append(xk)
+
+    # stima U[k] e score s_u(i) = sum_k |U_i[k]|
+    tau = 0.02
+    U_test = []
+    for k in range(len(X_test) - 1):
+        z = X_test[k+1] - (M_test @ X_test[k])
+        U_hat = _soft_shrink_neg(z, tau=tau)
+        U_test.append(U_hat)
+
+    s_u_test = torch.stack([u.abs() for u in U_test], dim=0).sum(dim=0).view(-1)  # (E,)
+
+    # Top-K tubi sospetti
+    K = 3
+    vals_e, idx_e = torch.topk(s_u_test, k=min(K, s_u_test.numel()))
+    print("\n-- Top-K tubi sospetti (edge) --")
+    for rank, (i, v) in enumerate(zip(idx_e.tolist(), vals_e.tolist()), start=1):
+        edge_name = idx2edge_ref[i] if idx2edge_ref is not None else f"edge_{i}"
+        print(f" {rank}. Tubo {edge_name} → score = {v:.4f}")
+
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
-    run_GNN_topo_comparison_multi(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy.inp")
+    run_GNN_UdiK(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy.inp")
 
