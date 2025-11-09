@@ -320,3 +320,30 @@ def run_GNN_topo_comparison(inp_path):
     # ---------------------------
 
     return model_plain, model_topo, graphs
+
+
+# Modello che implementa UdiK come layer modello
+
+class TopoDynamicUEstimator(nn.Module):
+    """
+    Implementa la dinamica di UdiK:
+        x_{k+1} = M x_k + U_k
+    Stima:
+        U_hat = -ReLU(soft(-(x_{k+1} - Mx_k), tau))
+    """
+    def __init__(self, tau: float = 0.02):
+        super().__init__()
+        self.tau = nn.Parameter(torch.tensor(float(tau)), requires_grad=False)
+
+    @staticmethod
+    def soft(x, tau):
+        return torch.sign(x) * torch.clamp(x.abs() - tau, min=0.0)
+
+    def forward(self, data_t: Data, data_t1: Data):
+        xk = data_t.edge_flow.view(-1, 1)
+        xk1 = data_t1.edge_flow.view(-1, 1)
+        M = data_t.M
+
+        z = xk1 - (M @ xk)  # residuo dinamico
+        U_hat = -F.relu(self.soft(-z, float(self.tau.item())))  # sparsità + segno fisico
+        return U_hat, z

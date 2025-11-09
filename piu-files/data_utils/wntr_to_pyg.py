@@ -273,7 +273,7 @@ def visualize_snapshot(all_snapshots, episode_id, step, wn, results):
     plot_cell_complex_flux(G, coords, selected_cycles, f_polygons_abs, vmin_p, vmax_p, leak_node, episode=episode_id, step=step)
 
 from torch_geometric.data import Data
-from topological import build_L1_and_M
+from topological import build_M
 from main_dyn_topologyknown_01 import func_gen_B2_lu
 
 def build_pyg_time_series(wn, results, alpha=0.1, max_cycle_length=7):
@@ -293,7 +293,7 @@ def build_pyg_time_series(wn, results, alpha=0.1, max_cycle_length=7):
     B1_np, B2_np, selected_cycles = func_gen_B2_lu(G, max_cycle_length=max_cycle_length)
 
     # Costruisci L1 e M (propagatore dinamico)
-    _, _, M_np = build_L1_and_M(B1_np, B2_np, alpha=alpha)
+    _, _, M_np = build_M(B1_np, B2_np, alpha=alpha)
 
     # Converti tutti i tempi WNTR in snapshot PyG
     all_snapshots = []
