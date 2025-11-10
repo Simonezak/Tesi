@@ -336,24 +336,58 @@ def run_GNN_topo_comparison_multi(inp_path):
 
 def run_GNN_UdiK(inp_path):
     """
+    x[k+1] = M*x[k] + u[k]
+
+    u[k] = x[k+1] - M*x[k]
+
+    Abbiamo x[k+1] e x[k] attraverso la simulazione WNTR.
+    preferisco prelevarli dal pyg che avevo già formato in modo da avere
+    la sicurezza che gli archi vengano messi sempre nello stesso ordine
+
+    M è calcolato attraverso questa formula, come richiesto nel paper.
+    "In our model, we assume M equal to the mask of the first-order 
+    Laplacian L1, as it describes lower and upper adjacencies among edges.
+    To avoid stability issues, the matrix M is normalized by its maximum 
+    eigenvalue."
+    il laplaciano L1 è calcolato con la stessa formula che Tiziana mi aveva
+    scritto sul foglietto
+
+    L1 = B1.T @ B1 + B2 @ B2.T
+
+    B1 e B2 sono calcolati con Func_gen_B2 di Lucia
+    poi L1 viene normalizzato per l'autovalore massimo (diventando L1_norm).
+    La maschera non so bene come si costruiva quindi ho lasciato L1_norm (da vedere)
+
+    Per quanto riguarda la parte di anomaly detection
+
+    x[k+1] - M*x[k] viene calcolato come z. poi la u* viene calcolata singolarmente
+    per ogni arco e per ogni attraverso la soft(z, lambda) che risolve la condizione
+    di ottimalità di u*. Attraverso la funzione -ReLU si rende di nuovo negativi
+    gli u come necessario e si decide quali archi superano la threshold lambda 
+    imposta per u.
+
+    infine viene calcolato s_u come la somma delle anomalie di tutti gli step
+    per ogni arco. I top 3 archi con anomalie piu alte sono printati a schermo
+    ed è possibile visualizzarli attraverso la funzione
+
+    Non ho creato un modello ne con epoch perche qui si trattava semplicemente
+    di trovare l'ottimale di una funzione, niente da trainare o almeno così
+    l'ho vista io
 
     """
 
     num_episodes=3
-    max_steps=8
+    max_steps=200
     # lr=1e-3
     # epochs=50
 
-    alpha = 0.5
-    tau = 0.002
+    lambda_reg = 0.002
 
-    # Questa lista conterrà tutti gli snapshot di tutti gli episodi
     all_snapshots = []
     all_demands = []
     all_leak_demands = []
     all_flowrates = []
 
-    # Istanziamento Ambiente
     env = WNTREnv(inp_path, max_steps=max_steps, hydraulic_timestep=600)
     
     print(f"Inizializzato GNN. \nNumero Episodi: {num_episodes} \nNumero Step: {max_steps} \n")
@@ -371,9 +405,11 @@ def run_GNN_UdiK(inp_path):
         results = sim.get_results()
         G, coords = build_nx_graph_from_wntr(wn, results)
         B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length=8)
-        M = build_M(B1, B2, alpha=alpha)
+        M = build_M(B1, B2)
         M_t = torch.from_numpy(M).float()
 
+        # Dati necessari per il calcolo dell'anomalia U[k] e eventualmente
+        #  per qualche training/confronto con demands + leak demands
         episode_demands = []
         episode_leak_demands = []
         episode_flowrates = []
@@ -417,7 +453,7 @@ def run_GNN_UdiK(inp_path):
             all_leak_demands.append(episode_leak_demands)
             all_flowrates.append(episode_flowrates)
         
-
+        # Calcolo u* per ogni arco, per ogni step
         for k in range(step - 1):
             xk  = torch.tensor(episode_flowrates[k], dtype=torch.float32).view(-1, 1)
             xk1 = torch.tensor(episode_flowrates[k + 1], dtype=torch.float32).view(-1, 1)
@@ -425,8 +461,8 @@ def run_GNN_UdiK(inp_path):
             # residuo dinamico
             z = xk1 - (M_t @ xk)
             
-            # sparsificazione e vincolo di segno come nel paper
-            soft = torch.sign(-z) * torch.clamp((-z).abs() - tau, min=0.0)
+            # soft per risolvere la condizione di ottimalità di u*
+            soft = torch.sign(-z) * torch.clamp((-z).abs() - lambda_reg, min=0.0)
 
             U_hat = -torch.relu(soft)
 
@@ -434,11 +470,11 @@ def run_GNN_UdiK(inp_path):
 
             episode_U.append(U_hat)
 
-        s_u = torch.stack([u.abs() for u in episode_U], dim=0).sum(dim=0).view(-1)
 
         # sommatoria di tutte le U di tutti gli step di un singolo episodio
         # s_u(i) = sum_k |U_i[k]|
-        
+        s_u = torch.stack([u.abs() for u in episode_U], dim=0).sum(dim=0).view(-1)
+
         plot_edge_s_u(G, coords, s_u, cmap="plasma", leak_node=leak_node_get)
 
 

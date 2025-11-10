@@ -363,16 +363,21 @@ def compute_polygon_flux(f, B2, abs: bool = False):
     return f_polygons
 
 
-def row_normalize(A, eps=1e-9):
-    s = np.abs(A).sum(axis=1, keepdims=True) + eps
-    return A / s
-
 def build_M(B1, B2, alpha=0.2):
+    # Laplaciano di primo ordine L1
     L1 = B1.T @ B1 + B2 @ B2.T
-    L1n = row_normalize(L1)
 
+    # Calcolo autovalore massimo
+    eigvals = np.linalg.eigvals(L1)
+    lambda_max = np.max(np.real(eigvals))
+
+    # Normalizzazione
+    L1_norm = L1 / lambda_max
+
+    # Dinamica topologica # Non confermata
     E = L1.shape[0]
-    M = np.eye(E) - alpha * L1n
+    M = np.eye(E) - alpha * L1_norm
+
     return M
 
 
