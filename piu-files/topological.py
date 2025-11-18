@@ -367,16 +367,23 @@ def build_M(B1, B2, alpha=0.2):
     # Laplaciano di primo ordine L1
     L1 = B1.T @ B1 + B2 @ B2.T
 
+    #print(L1)
+
+    M = (L1 != 0).astype(np.float64)
+    np.fill_diagonal(M, 0.0)
+
+    #print(M)
+
     # Calcolo autovalore massimo
-    eigvals = np.linalg.eigvals(L1)
-    lambda_max = np.max(np.real(eigvals))
+    lam_max = np.linalg.eigvals(M).max()
+    M = M / lam_max
 
     # Normalizzazione
-    L1_norm = L1 / lambda_max
+    #L1_norm = L1 / lambda_max
 
     # Dinamica topologica # Non confermata
-    E = L1.shape[0]
-    M = np.eye(E) - alpha * L1_norm
+    #E = L1.shape[0]
+    #M = np.eye(E) - alpha * L1_norm
 
     return M
 

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 from data_utils.wntr_to_pyg import build_pyg_from_wntr, build_nx_graph_from_wntr, compute_topological_node_features, visualize_snapshot
 from main_dyn_topologyknown_01 import func_gen_B2_lu
-from topological import compute_polygon_flux, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability, build_M, row_normalize
+from topological import compute_polygon_flux, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability, build_M
 from GNN_LD import GNNLeakDetector, train_model
 from GNN_TopoLD import GNNLeakDetectorTopo
 from data_utils.wntr_to_pyg import build_pyg_time_series
@@ -32,7 +32,11 @@ class WNTREnv:
 
         # Crea rete
         self.wn = wntr.network.WaterNetworkModel(self.inp_path)
+        self.wn.options.hydraulic.demand_model = 'PDD'
+
         self.sim = InteractiveWNTRSimulator(self.wn)
+
+        print(self.wn.options.hydraulic.demand_model)
 
  
         # Aggiungi un leak
@@ -77,6 +81,7 @@ def run_wntr_experiment(inp_path):
     env.reset(with_leak=True)
     wn = env.wn
     sim = env.sim
+
 
     # Primo Step
 
@@ -377,7 +382,7 @@ def run_GNN_UdiK(inp_path):
     """
 
     num_episodes=3
-    max_steps=200
+    max_steps=50
     # lr=1e-3
     # epochs=50
 
@@ -462,7 +467,7 @@ def run_GNN_UdiK(inp_path):
             z = xk1 - (M_t @ xk)
             
             # soft per risolvere la condizione di ottimalità di u*
-            soft = torch.sign(-z) * torch.clamp((-z).abs() - lambda_reg, min=0.0)
+            soft = torch.sign(-z) * torch.clamp((-z) - lambda_reg, min=0.0)
 
             U_hat = -torch.relu(soft)
 
@@ -485,10 +490,11 @@ def run_GNN_UdiK(inp_path):
             print(f"Edge {idx2edge[i]}: score={vals[j]:.4f}")
 
         #sim.plot_results("node", "demand")
+        #sim.plot_network()
         #sim.plot_network_over_time("demand", "flowrate")
 
 
 
 if __name__ == "__main__":
-    run_GNN_UdiK(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy.inp")
+    run_GNN_UdiK(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy_copy.inp")
 
