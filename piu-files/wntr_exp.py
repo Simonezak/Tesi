@@ -490,6 +490,171 @@ def run_GNN_UdiK(inp_path):
         sim.plot_network_over_time("demand", "flowrate")
 
 
+def pyg_to_ggnn_inputs(data):
+    """
+    Converte un PyG Data generato da build_pyg_from_wntr
+    in input compatibili con GGNNModel:
+    
+    - attr_matrix : tensor [1, N, 1]   (es. pressioni)
+    - adj_matrix  : tensor [1, N, N]
+    """
+    import torch
+    
+    # ---- Feature nodali: usa solo la pressione (colonna 2 di data.x)
+    pressure = data.x[:, 2].view(1, -1, 1).float()  # shape [1, N, 1]
+
+    # ---- Matrice di adiacenza NxN
+    N = data.num_nodes
+    adj = torch.zeros((N, N), dtype=torch.float32)
+
+    src = data.edge_index[0]
+    dst = data.edge_index[1]
+    adj[src, dst] = 1.0
+    adj[dst, src] = 1.0  # grafo non orientato
+
+    adj = adj.view(1, N, N)  # -> [1, N, N]
+
+    return pressure, adj
+
+
+
+def run_GGNN(inp_path):
+    """
+    Versione semplificata di run_GNN_topo_comparison_multi,
+    ma con:
+        • solo modello GGNN
+        • niente topological layer
+        • usa pressione nodale per predire leak
+        • usa PyG + conversione per GGNN
+    """
+
+    import torch
+    import torch.nn as nn
+
+    from GGNN import GGNNModel   # <-- assicurati che il file tuo si chiami GGNN.py
+
+    num_episodes = 3
+    max_steps    = 6
+    lr           = 1e-3
+    epochs       = 50
+
+    all_snapshots = []
+
+    env = WNTREnv(inp_path, max_steps=max_steps, hydraulic_timestep=3600)
+
+    print("\n=== TRAIN GGNN ===")
+
+    # 1️⃣ RACCOLTA SNAPSHOT (train set)
+    for ep in range(num_episodes):
+        print(f"\n--- Episodio {ep+1}/{num_episodes} ---")
+        env.reset(with_leak=True)
+        wn, sim = env.wn, env.sim
+        leak_node = env.leak_node_name
+
+        for step in range(max_steps):
+            sim.step_sim()
+            results = sim.get_results()
+
+            # PyG snapshot
+            data, node2idx, idx2node, _, _ = build_pyg_from_wntr(wn, results)
+
+            # Label: 1 sul nodo leak
+            y = torch.zeros(data.num_nodes, 1)
+            y[node2idx[leak_node]] = 1.0
+            data.y = y
+
+            # Conversione PyG → input GGNN
+            attr_matrix, adj_matrix = pyg_to_ggnn_inputs(data)
+
+            sample = {
+                "attr": attr_matrix,
+                "adj": adj_matrix,
+                "y": y,
+                "data": data,
+                "node2idx": node2idx,
+                "idx2node": idx2node
+            }
+
+            all_snapshots.append(sample)
+
+    # 2️⃣ ISTANZIA MODELLO GGNN
+    print("\n[INIT] GGNN Model")
+
+    model = GGNNModel(
+        attr_size=1,             # solo pressione
+        hidden_size=64,
+        propag_steps=6
+    )
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_fn   = nn.CrossEntropyLoss()
+
+    # 3️⃣ TRAINING GGNN
+    print("\n[TRAIN] GGNN")
+    for epoch in range(epochs):
+        total_loss = 0
+        model.train()
+
+        for sample in all_snapshots:
+            attr = sample["attr"]
+            adj  = sample["adj"]
+            y    = sample["y"]
+
+            # CrossEntropy vuole classi => indice
+            target = torch.argmax(y.squeeze(), dim=0).unsqueeze(0)
+
+            optimizer.zero_grad()
+            out = model(attr, adj)              # -> [1, N]
+            loss = loss_fn(out, target)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        if epoch % 10 == 0:
+            print(f"Epoch {epoch:03d} | Loss = {total_loss:.4f}")
+
+    # 4️⃣ TEST su nuovo episodio
+    print("\n=== TEST GGNN ===")
+    test_env = WNTREnv(inp_path, max_steps=max_steps)
+    test_env.reset(with_leak=True)
+    wn, sim = test_env.wn, test_env.sim
+    leak_node_real = test_env.leak_node_name
+
+    # ultima simulazione
+    for _ in range(max_steps):
+        sim.step_sim()
+
+    results = sim.get_results()
+    data, node2idx, idx2node, _, _ = build_pyg_from_wntr(wn, results)
+    attr_matrix, adj_matrix = pyg_to_ggnn_inputs(data)
+
+    model.eval()
+    with torch.no_grad():
+        out = model(attr_matrix, adj_matrix).squeeze()
+
+    probs = torch.softmax(out, dim=0)
+    top3 = torch.topk(probs, k=3)
+
+    print(f"\nLeak reale: {leak_node_real}")
+    for rank, (idx, score) in enumerate(zip(top3.indices.tolist(), top3.values.tolist()), start=1):
+        print(f"{rank}. Nodo {idx2node[idx]} → prob = {score:.4f}")
+
+    # 5️⃣ Plot probabilità di leak
+    G, coords = build_nx_graph_from_wntr(wn, results)
+    plot_leak_probability(G, coords, probs, leak_node=node2idx[leak_node_real])
+
+
+
+
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
-    run_GNN_UdiK(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy.inp")
+    run_GGNN(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy.inp")
 
