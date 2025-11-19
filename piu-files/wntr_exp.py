@@ -53,7 +53,7 @@ class WNTREnv:
             print(f"[LEAK] Nodo selezionato per la perdita: {self.leak_node_name}")
 
             # parametri leak
-            area = 0.05
+            area = 0.0005
             self.sim.start_leak(self.leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
             
             print(f"[LEAK] Aggiunta perdita con area={area:.3e} m²")
@@ -490,11 +490,12 @@ def run_GNN_UdiK(inp_path):
             print(f"Edge {idx2edge[i]}: score={vals[j]:.4f}")
 
         #sim.plot_results("node", "demand")
-        #sim.plot_network()
-        #sim.plot_network_over_time("demand", "flowrate")
+        sim.plot_network()
+        sim.plot_network_over_time("demand", "flowrate")
 
 
 
 if __name__ == "__main__":
-    run_GNN_UdiK(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy_copy.inp")
+    run_GNN_UdiK(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Leveraging\case-study-map.inp")
+    #run_GNN_UdiK(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy_copy.inp")
 
