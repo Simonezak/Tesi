@@ -12,7 +12,8 @@ from GNN_LD import GNNLeakDetector, train_model
 from GNN_TopoLD import GNNLeakDetectorTopo
 from wntr_to_pyg import build_pyg_time_series
 from topological import plot_edge_s_u, plot_edge_Uhat
-from GGNN import GGNNModel, RandomForestLeakOnsetDetector
+from GGNN import GGNNModel
+
 
 import wntr
 from wntr.sim.interactive_network_simulator import InteractiveWNTRSimulator
@@ -45,17 +46,14 @@ class WNTREnv:
             ]
             self.leak_node_name = np.random.choice(junctions)
             
-            # parametri leak
-            area = 0.05
-            self.leak_start_step = np.random.randint(1, 11)
-
-
             #self.leak_node_name = "11"
             print(f"[LEAK] Nodo selezionato per la perdita: {self.leak_node_name}")
-            print(f"[LEAK] Il leak inizierà allo step {self.leak_start_step}")
 
-            #self.sim.start_leak(self.leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
+            # parametri leak
+            area = 0.05
+            self.sim.start_leak(self.leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
             
+            print(f"[LEAK] Aggiunta perdita con area={area:.3e} m²")
         else:
             print("[INIT] Nessuna perdita inserita in questo episodio.")
 
@@ -150,6 +148,7 @@ def run_wntr_experiment(inp_path):
 
     plot_cell_complex_flux(G, coords, selected_cycles, f_polygons, vmin, vmax, leak_node, step)
     plot_cell_complex_flux(G, coords, selected_cycles, f_polygons_abs, vmin, vmax, leak_node, step)
+
 
 
 def run_GNN_topo_comparison_multi(inp_path):
@@ -337,6 +336,161 @@ def run_GNN_topo_comparison_multi(inp_path):
     plot_leak_probability(G, coords, preds_topo, node2idx[leak_node.name])
 
 
+def run_GNN_UdiK(inp_path):
+    """
+    x[k+1] = M*x[k] + u[k]
+
+    u[k] = x[k+1] - M*x[k]
+
+    Abbiamo x[k+1] e x[k] attraverso la simulazione WNTR.
+    preferisco prelevarli dal pyg che avevo già formato in modo da avere
+    la sicurezza che gli archi vengano messi sempre nello stesso ordine
+
+    M è calcolato attraverso questa formula, come richiesto nel paper.
+    "In our model, we assume M equal to the mask of the first-order 
+    Laplacian L1, as it describes lower and upper adjacencies among edges.
+    To avoid stability issues, the matrix M is normalized by its maximum 
+    eigenvalue."
+    il laplaciano L1 è calcolato con la stessa formula che Tiziana mi aveva
+    scritto sul foglietto
+
+    L1 = B1.T @ B1 + B2 @ B2.T
+
+    B1 e B2 sono calcolati con Func_gen_B2 di Lucia
+    poi L1 viene normalizzato per l'autovalore massimo (diventando L1_norm).
+    La maschera non so bene come si costruiva quindi ho lasciato L1_norm (da vedere)
+
+    Per quanto riguarda la parte di anomaly detection
+
+    x[k+1] - M*x[k] viene calcolato come z. poi la u* viene calcolata singolarmente
+    per ogni arco e per ogni attraverso la soft(z, lambda) che risolve la condizione
+    di ottimalità di u*. Attraverso la funzione -ReLU si rende di nuovo negativi
+    gli u come necessario e si decide quali archi superano la threshold lambda 
+    imposta per u.
+
+    infine viene calcolato s_u come la somma delle anomalie di tutti gli step
+    per ogni arco. I top 3 archi con anomalie piu alte sono printati a schermo
+    ed è possibile visualizzarli attraverso la funzione
+
+    Non ho creato un modello ne con epoch perche qui si trattava semplicemente
+    di trovare l'ottimale di una funzione, niente da trainare o almeno così
+    l'ho vista io
+
+    """
+
+    num_episodes=3
+    max_steps=50
+    # lr=1e-3
+    # epochs=50
+
+    lambda_reg = 0.002
+
+    all_snapshots = []
+    all_demands = []
+    all_leak_demands = []
+    all_flowrates = []
+
+    env = WNTREnv(inp_path, max_steps=max_steps, hydraulic_timestep=600)
+    
+    print(f"Inizializzato GNN. \nNumero Episodi: {num_episodes} \nNumero Step: {max_steps} \n")
+
+    # Loop Episodi
+    for ep in range(num_episodes):
+        print(f"Episodio {ep+1}/{num_episodes}")
+
+        # Reset ambiente e Leak
+        env.reset(with_leak=True)
+        wn, sim = env.wn, env.sim
+        leak_node = env.leak_node_name
+        leak_node_get = wn.get_node(env.leak_node_name)
+
+        results = sim.get_results()
+        G, coords = build_nx_graph_from_wntr(wn, results)
+        B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length=8)
+        M = build_M(B1, B2)
+        M_t = torch.from_numpy(M).float()
+
+        # Dati necessari per il calcolo dell'anomalia U[k] e eventualmente
+        #  per qualche training/confronto con demands + leak demands
+        episode_demands = []
+        episode_leak_demands = []
+        episode_flowrates = []
+
+        episode_U = [] # lista di U[K] resettata per ogni episodio
+
+        # Loop degli step della simulazione
+        for step in range(max_steps):
+
+            sim.step_sim()
+            results = sim.get_results()
+
+            data, node2idx, idx2node, edge2idx, idx2edge = build_pyg_from_wntr(wn, results)
+            
+            # Preferisco prendere questi dati dal grafo generato da build_pyg_from_wntr, cosi almeno ho garantito che sono sempre nello stesso ordine
+            node_features = data.x.cpu().numpy()
+            demands = node_features[:, 1].tolist()      
+            leak_demands = node_features[:, 3].tolist()
+
+            edge_features = data.edge_attr.cpu().numpy()
+            flowrates = edge_features[:, 2].tolist()
+
+            # # # #
+            episode_demands.append(demands)
+            episode_leak_demands.append(leak_demands)
+            episode_flowrates.append(flowrates)
+            
+            # (roba che avevo fatto per l'altro modello) Label: 1 solo sul nodo del leak 
+            y = torch.zeros(data.num_nodes, 1)
+            if leak_node in node2idx:
+                y[node2idx[leak_node]] = 1.0
+            else:
+                print(f"Step {step}, Leak node {leak_node} non presente nel grafo")
+            
+            data.y = y
+            data.episode_id = ep
+            data.step = step
+
+            all_snapshots.append(data)
+            all_demands.append(episode_demands)
+            all_leak_demands.append(episode_leak_demands)
+            all_flowrates.append(episode_flowrates)
+        
+        # Calcolo u* per ogni arco, per ogni step
+        for k in range(step - 1):
+            xk  = torch.tensor(episode_flowrates[k], dtype=torch.float32).view(-1, 1)
+            xk1 = torch.tensor(episode_flowrates[k + 1], dtype=torch.float32).view(-1, 1)
+            
+            # residuo dinamico
+            z = xk1 - (M_t @ xk)
+            
+            # soft per risolvere la condizione di ottimalità di u*
+            soft = torch.sign(-z) * torch.clamp((-z) - lambda_reg, min=0.0)
+
+            U_hat = -torch.relu(soft)
+
+            #plot_edge_Uhat(G, coords, U_hat, cmap="coolwarm", step=step)
+
+            episode_U.append(U_hat)
+
+
+        # sommatoria di tutte le U di tutti gli step di un singolo episodio
+        # s_u(i) = sum_k |U_i[k]|
+        s_u = torch.stack([u.abs() for u in episode_U], dim=0).sum(dim=0).view(-1)
+
+        plot_edge_s_u(G, coords, s_u, cmap="plasma", leak_node=leak_node_get)
+
+
+        K = 3
+        vals, idx = torch.topk(s_u, k=K)
+        print("--- TOP-K edges by s_u ")
+        for j, i in enumerate(idx.tolist()):
+            print(f"Edge {idx2edge[i]}: score={vals[j]:.4f}")
+
+        #sim.plot_results("node", "demand")
+        sim.plot_network()
+        sim.plot_network_over_time("demand", "flowrate")
+
+
 def pyg_to_ggnn_inputs(data):
     """
     Converte un PyG Data generato da build_pyg_from_wntr
@@ -364,6 +518,7 @@ def pyg_to_ggnn_inputs(data):
     return pressure, adj
 
 
+
 def run_GGNN(inp_path):
     """
     Prova del modello GGNN di Leveraging, che
@@ -372,12 +527,11 @@ def run_GGNN(inp_path):
     """
 
     num_episodes = 3
-    max_steps    = 20
+    max_steps    = 50
     lr           = 1e-3
     epochs       = 50
 
     all_snapshots = []
-    rf_training_data = []         # per RandomForest
 
     env = WNTREnv(inp_path, max_steps=max_steps)
 
@@ -391,81 +545,34 @@ def run_GGNN(inp_path):
         wn, sim = env.wn, env.sim
         leak_node = env.leak_node_name
 
-        episode_snapshots = []   # tutti gli step PyG
-
         for step in range(max_steps):
-
-            if step == env.leak_start_step:
-                area = 0.05
-                env.sim.start_leak(env.leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
-
             sim.step_sim()
             results = sim.get_results()
 
             # PyG snapshot
             data, node2idx, idx2node, _, _ = build_pyg_from_wntr(wn, results)
 
-            # Label leak per GGNN
-            if step < env.leak_start_step:
-                continue
-            #    y = torch.zeros(data.num_nodes, 1)   # NESSUN NODO in leak
-            else:
-                y = torch.zeros(data.num_nodes, 1)
-                y[node2idx[leak_node]] = 1.0         # leak solo dopo l’inizio
-            #y = torch.zeros(data.num_nodes, 1)
-            #y[node2idx[leak_node]] = 1.0
-            #data.y = y
+            # Label: 1 sul nodo leak
+            y = torch.zeros(data.num_nodes, 1)
+            y[node2idx[leak_node]] = 1.0
+            data.y = y
 
-
-            #leak_idx = node2idx[env.leak_node_name]
-            #leak_val = data.x[leak_idx, 3].item()
-
-            #print(f"Step {step}: leak_demand[{env.leak_node_name}] = {leak_val:.6f}")
-
-
-            # --- PER RF: aggiungi SOLO data (PyG Data)
-            episode_snapshots.append(data)
-
-            # --- PER GGNN: costruisci sample complesso
+            # Conversione PyG → input GGNN
             attr_matrix, adj_matrix = pyg_to_ggnn_inputs(data)
 
-            all_snapshots.append({
-                "attr":    attr_matrix,
-                "adj":     adj_matrix,
-                "y":       y,
-                "data":    data,
+            sample = {
+                "attr": attr_matrix,
+                "adj": adj_matrix,
+                "y": y,
+                "data": data,
                 "node2idx": node2idx,
                 "idx2node": idx2node
-            })
+            }
 
-        #sim.plot_results("node", "demand")
-        #sim.plot_network_over_time("demand", "flowrate")
-        #sim.plot_network()
+            all_snapshots.append(sample)
 
-        """
-        rf_training_data.append({
-            "steps":      episode_snapshots,
-            "leak_start": env.leak_start_step
-        })
-        """
-
-
-                
-
-    # ============================================================
-    #            TRAIN RANDOM FOREST LEAK-ONSET
-    # ============================================================
-
-    """
-    print("\n=== TRAINING RANDOM FOREST ===")
-    rf = RandomForestLeakOnsetDetector()
-    rf.fit(rf_training_data)
-    # struttura Random Forest [{'steps': [Data(x=[28, 4], edge_index=[2, 34], edge_attr=[34, 3], y=[28, 1])]
-    """
-
-    # ============================================================
-    #                       TRAIN GGNN
-    # ============================================================
+    # 2️⃣ ISTANZIA MODELLO GGNN
+    print("\n[INIT] GGNN Model")
 
     model = GGNNModel(
         attr_size=1,  # solo pressione
@@ -473,11 +580,13 @@ def run_GGNN(inp_path):
         propag_steps=6
     )
 
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn   = nn.CrossEntropyLoss()
 
-    print("\n=== TRAINING GGNN ===")
-
+    # 3️⃣ TRAINING GGNN
+    print("\n[TRAIN] GGNN")
+    
     for epoch in range(epochs):
         total_loss = 0
         model.train()
@@ -488,9 +597,9 @@ def run_GGNN(inp_path):
         adj  = sample["adj"]
         y    = sample["y"]
 
-
         # CrossEntropy vuole classi => indice
         target = torch.argmax(y.squeeze(), dim=0).unsqueeze(0)
+
         optimizer.zero_grad()
         out = model(attr, adj)              # -> [1, N]
         loss = loss_fn(out, target)
@@ -506,54 +615,14 @@ def run_GGNN(inp_path):
 
     # 4️⃣ TEST su nuovo episodio
 
-    print("\n\n=== TEST PHASE ===")
 
+    print("\n === TEST GGNN ===")
     test_env = WNTREnv(inp_path, max_steps=max_steps)
     test_env.reset(with_leak=True)
     wn, sim = test_env.wn, test_env.sim
     leak_node_real = test_env.leak_node_name
 
-    # --------------------
-    # 1) LEAK ONSET DETECTION (RandomForest)
-    # --------------------
-    """
-    print("\n--- Leak onset detection (Random Forest) ---")
-
-
-    onset_scores = []
-
-    for step in range(max_steps):
-    
-        if step == test_env.leak_start_step:
-                area = 0.05
-                test_env.sim.start_leak(test_env.leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
-
-        sim.step_sim()
-        results = sim.get_results()
-
-        data, _, _, _, _ = build_pyg_from_wntr(wn, results)
-
-        prob = rf.predict(data)
-        onset_scores.append(prob)
-
-    print(onset_scores)
-    predicted_onset = int(np.argmax(onset_scores))
-
-    print(f"\n Inizio Leak stimato allo step: {predicted_onset}")
-    """
-    # --------------------
-    # 2) LEAK LOCALIZATION (GGNN)
-    # --------------------
-    
-    print("\n--- Leak localization (GGNN) ---")
-
-    # Usa l'ultimo timestep
-    for step in range(max_steps):
-
-        if step == test_env.leak_start_step:
-                area = 0.05
-                sim.start_leak(test_env.leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
-
+    for _ in range(max_steps):
         sim.step_sim()
 
     results = sim.get_results()

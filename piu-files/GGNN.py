@@ -70,7 +70,6 @@ class GGNNModel(nn.Module):
 
         # output: un solo numero per nodo
         self.linear_o = nn.Linear(hidden_size, 1)
-        
         self._initialization()
 
     # Funzione che serve ad iniziallizzare i pesi        
@@ -145,11 +144,15 @@ class RandomForestLeakOnsetDetector:
     è appena iniziato un LEAK.
     """
 
-    def __init__(self, n_trees=300, max_depth=None):
+    def __init__(self, n_trees=200, max_depth=12,min_samples_split=4,min_samples_leaf=2,class_weight="balanced",random_state=42):
+        
         self.model = RandomForestClassifier(
             n_estimators=n_trees,
             max_depth=max_depth,
-            class_weight="balanced"
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            class_weight=class_weight,
+            random_state=random_state
         )
 
     @staticmethod
@@ -182,6 +185,11 @@ class RandomForestLeakOnsetDetector:
 
         X = np.array(X)
         Y = np.array(Y)
+        #print("simone")
+        #print(len(X))
+        #print(X)
+        #print("zagaria")
+        #print(Y)
 
         print("➡ Training RandomForest per leak onset...")
         self.model.fit(X, Y)
