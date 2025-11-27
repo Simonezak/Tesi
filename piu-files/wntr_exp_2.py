@@ -656,5 +656,5 @@ def run_GGNN(inp_path):
 
 
 if __name__ == "__main__":
-    run_GGNN(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy.inp")
+    run_GGNN(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\20x20_branched.inp")
 

@@ -162,38 +162,32 @@ class RandomForestLeakOnsetDetector:
         Feature ≡ pressioni nodi + flowrates archi
         """
         pressures = snapshot.x[:, 2].cpu().numpy()        # pressure
-        flows     = snapshot.edge_attr[:, 2].cpu().numpy()  # flowrate
-        vector = np.concatenate([pressures, flows])
-        return vector
+        #flows     = snapshot.edge_attr[:, 2].cpu().numpy()  # flowrate
+        #vector = np.concatenate([pressures, flows])
+        return pressures
 
     def fit(self, snapshots):
         X, Y = [], []
 
         for ep in snapshots:
-            ep_steps = ep["steps"]
+            ep_steps = ep["feature_vector"]
             leak_start = ep["leak_start"]   # step in cui parte il leak
 
             for step_idx, data in enumerate(ep_steps):
-                x = self.extract_features(data)
 
                 # LABEL:
                 # 1 SOLO nello step in cui parte il leak
                 label = 1 if step_idx == leak_start else 0
 
-                X.append(x)
+                X.append(data)
                 Y.append(label)
 
         X = np.array(X)
         Y = np.array(Y)
-        #print("simone")
-        #print(len(X))
-        #print(X)
-        #print("zagaria")
-        #print(Y)
 
-        print("➡ Training RandomForest per leak onset...")
+        print("Training RandomForest per leak onset...")
         self.model.fit(X, Y)
-        print("✔ RandomForest addestrato.")
+        print("RandomForest addestrato.")
 
     def predict(self, snapshot):
         x = self.extract_features(snapshot).reshape(1, -1)
