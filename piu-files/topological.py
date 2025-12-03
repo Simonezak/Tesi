@@ -337,6 +337,106 @@ def plot_leak_probability(G, coords, leak_probs, leak_node=None,
 
     return fig, ax
 
+def plot_leak_probability_multi(
+    G,
+    coords,
+    leak_probs,
+    leak_nodes=None,     # 🔥 ora può essere lista o singolo nodo
+    figsize=(8,8),
+    cmap='plasma',
+    node_size=80,
+    edge_color='k',
+    annotate=True,
+    annot_fontsize=8
+):
+    """
+    Visualizza la probabilità di leak per ciascun nodo.
+    Versione multi-leak: evidenzia più nodi di leak.
+
+    Args:
+        G : grafo NetworkX
+        coords : array Nx2 delle coordinate nodali
+        leak_probs : tensor/array con probabilità per nodo
+        leak_nodes : indice singolo o lista di indici nodali da evidenziare
+    """
+
+    import torch
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib import colors
+
+    # Converte in numpy
+    if isinstance(leak_probs, torch.Tensor):
+        leak_probs = leak_probs.detach().cpu().numpy().flatten()
+    else:
+        leak_probs = np.array(leak_probs).flatten()
+
+    # Normalizzazione colori
+    norm = colors.Normalize(vmin=np.min(leak_probs), vmax=np.max(leak_probs))
+    cmap_obj = plt.get_cmap(cmap)
+    node_colors = [cmap_obj(norm(p)) for p in leak_probs]
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Disegna archi
+    for u, v in G.edges():
+        x0, y0 = coords[u]
+        x1, y1 = coords[v]
+        ax.plot([x0, x1], [y0, y1], color=edge_color, linewidth=1, zorder=1)
+
+    # Disegna nodi
+    ax.scatter(
+        coords[:, 0], coords[:, 1],
+        s=node_size*1.5,
+        c=node_colors,
+        edgecolor='black',
+        zorder=3
+    )
+
+    # Annotazioni con valori
+    if annotate:
+        for i, (x, y) in enumerate(coords):
+            ax.text(
+                x, y,
+                f"{leak_probs[i]:.1e}",
+                color='black',
+                fontsize=annot_fontsize,
+                ha='center', va='center',
+                fontweight='bold',
+                zorder=5
+            )
+
+    # 🔥 --- Evidenzia MULTI LEAK ---
+    if leak_nodes is not None:
+
+        # Normalizza: se è un singolo valore → trasformalo in lista
+        if not isinstance(leak_nodes, (list, tuple, np.ndarray)):
+            leak_nodes = [leak_nodes]
+
+        for ln in leak_nodes:
+            idx = int(ln)     # deve essere indice numerico
+            x, y = coords[idx]
+
+            ax.text(
+                x + 3, y + 3,
+                "LEAK",
+                color="red",
+                fontsize=10,
+                fontweight="bold",
+                zorder=11
+            )
+
+    # Colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
+    fig.colorbar(sm, ax=ax, label="Leak probability")
+
+    ax.set_title("Leak probability per node (multi-leak)")
+    ax.set_aspect("equal")
+    ax.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+    return fig, ax
 
 
 

@@ -12,7 +12,7 @@ from GNN_LD import GNNLeakDetector, train_model
 from GNN_TopoLD import GNNLeakDetectorTopo
 from wntr_to_pyg import build_pyg_time_series
 from topological import plot_edge_s_u, plot_edge_Uhat
-from GGNN import GGNNModel, RandomForestLeakOnsetDetector
+from GGNN_multi import GGNNModel, RandomForestLeakOnsetDetector
 
 import wntr
 from wntr.sim.interactive_network_simulator import InteractiveWNTRSimulator
@@ -475,7 +475,8 @@ def run_GGNN(inp_path):
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_fn   = nn.CrossEntropyLoss()
+    loss_fn   = nn.MSELoss()
+
 
     print("\n=== TRAINING GGNN ===")
 
