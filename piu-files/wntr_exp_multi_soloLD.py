@@ -12,7 +12,7 @@ from GNN_LD import GNNLeakDetector, train_model
 from GNN_TopoLD import GNNLeakDetectorTopo
 from wntr_to_pyg import build_pyg_time_series
 from topological import plot_edge_s_u, plot_edge_Uhat
-from GGNN_multi import GGNNModel, RandomForestLeakOnsetDetector
+from GGNN_multi_SS import GGNNModel, RandomForestLeakOnsetDetector
 
 import wntr
 from wntr.sim.interactive_network_simulator import InteractiveWNTRSimulator
@@ -74,6 +74,7 @@ class WNTREnv:
 
         return
 
+
 def pyg_to_ggnn_inputs(data):
     """
     Converte un PyG Data generato da build_pyg_from_wntr
@@ -98,7 +99,6 @@ def pyg_to_ggnn_inputs(data):
     adj = adj.view(1, N, N)  # -> [1, N, N]
 
     return pressure, adj
-
 
 
 def run_GGNN(inp_path):
@@ -161,6 +161,10 @@ def run_GGNN(inp_path):
                 y = torch.zeros(data.num_nodes, 1)
 
                 for leak_node in env.leak_node_names:
+                    leak_idx = node2idx[leak_node]
+                    y[leak_idx] = 1.0
+                """
+                for leak_node in env.leak_node_names:
                     if leak_node in node2idx:
                         y[node2idx[leak_node]] = 1.0       # leak solo dopo l’inizio
                         leak = data.x[:,3]         # colonna leak_demand
@@ -169,6 +173,7 @@ def run_GGNN(inp_path):
                         y = u.view(-1,1).float()   # shape [N,1]
 
                         #print(y)
+                """
 
             """
             for leak_node in env.leak_node_names:
@@ -222,7 +227,7 @@ def run_GGNN(inp_path):
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_fn = nn.MSELoss()
+    loss_fn = nn.BCEWithLogitsLoss()
 
 
     print("\n=== TRAINING GGNN ===")
@@ -272,9 +277,9 @@ def run_GGNN(inp_path):
 
         # attiva leak nel momento corretto
         if step == test_env.leak_start_step:
-            area = 0.05
+            area = 0.09
             for leak_node in test_env.leak_node_names:
-                test_env.sim.start_leak(leak_node, leak_area=area, leak_discharge_coefficient=0.75)
+                test_env.sim.start_leak(leak_node, leak_area=area, leak_discharge_coefficient=0.85)
 
         sim.step_sim()
         results = sim.get_results()
@@ -310,6 +315,7 @@ def run_GGNN(inp_path):
     print("\n--- Leak localization (GGNN) ---")
 
     anomaly_time_series = []
+    prob_time_series = []
 
     for snap in test_snapshots[predicted_onset:]:
         
@@ -320,45 +326,101 @@ def run_GGNN(inp_path):
 
         attr_matrix, adj_matrix = pyg_to_ggnn_inputs(data)
 
+        """
         with torch.no_grad():
             u_pred = model(attr_matrix, adj_matrix).view(-1)
 
-        anomaly_time_series.append(u_pred.cpu().numpy())
+            TH = torch.quantile(u_pred, 0.8) * 0.5   # metà dell'80th percentile
+            u_pred = torch.where(u_pred > TH, u_pred, torch.zeros_like(u_pred))
+        """
+        with torch.no_grad():
+            logits = model(attr_matrix, adj_matrix).view(-1)     # shape [N]
+            p_pred = torch.sigmoid(logits)                       # probabilità
 
-        # target
-        leak        = data.x[:,3]
-        u_target    = (leak).view(-1)
+        #anomaly_time_series.append(u_pred.cpu().numpy())
+
+                # salva per media temporale
+        prob_time_series.append(p_pred.cpu().numpy())
+
+        # ----- target binario -----
+        y = torch.zeros(len(p_pred))
+        for leak_node in test_env.leak_node_names:
+            leak_idx = node2idx[leak_node]
+            y[leak_idx] = 1.0
 
         print(f"\nSTEP {step}")
-        print(f"{'Nodo':<8} {'u_pred':<12} {'u_target':<12} {'diff':<12}")
-        for i in range(len(u_pred)):
-            p = float(u_pred[i])
-            t = float(u_target[i])
-            print(f"{i:<8} {p:<12.5f} {t:<12.5f} {p - t:<12.5f}")
+        print(f"{'Nodo':<12} {'p_pred':<12} {'target':<12}")
+        print("-"*35)
         
-        # Converti lista → array [T, N]
-        A = np.array(anomaly_time_series)   # shape: (num_steps_after_onset, num_nodes)
+        for i in range(len(p_pred)):
+            node_name = idx2node[i]
+            pp = float(p_pred[i])
+            tt = float(y[i])
+            print(f"{node_name:<12} {pp:<12.5f} {tt:<12.5f}")
 
-        # Somma temporale delle anomalie
-        s_u = A.sum(axis=0)                 # shape: (num_nodes,)
+    # -----------------------------
+    #   MEDIA DELLE PROBABILITÀ
+    # -----------------------------
 
-        # Ordina i nodi dal più sospetto al meno
-        ranking = np.argsort(-s_u)
+    print("\n\n=== MEDIA TEMPORALE DELLE PROBABILITÀ ===")
 
-        print("\n\n=== TOP 10 nodi più sospetti (con nome reale) ===")
+    # array [T, N]
+    A = np.array(prob_time_series)
 
-        top_k = 10
-        top_nodes = ranking[:top_k]
+    # media (non somma, perché classificazione)
+    mean_p = A.mean(axis=0)
 
-        print(f"\n{'Pos':<5} {'Nodo':<15} {'Anomalia cumulata':<20}")
-        print("-"*55)
+    # ranking nodi più sospetti
+    ranking = np.argsort(-mean_p)
 
-        for pos, idx in enumerate(top_nodes, start=1):
-            node_name = idx2node[idx]      # 🔥 converti indice → nome reale WK
-            print(f"{pos:<5} {node_name:<15} {s_u[idx]:<20.5f}")
+    print(f"\n{'Nodo':<12} {'mean_p':<12}")
+    print("-"*30)
 
-        print(f"\n Nodi reali in leak: {test_env.leak_node_names}")
+    for i in ranking:
+        node_name = idx2node[i]
+        print(f"{node_name:<12} {mean_p[i]:<12.5f}")
 
+    best_node = ranking[0]
+    print(f"\n🔍 Nodo più sospetto (media probabilità): {idx2node[best_node]}")
+    print(f"🎯 Nodo reale in leak: {test_env.leak_node_names}")
+
+
+    """
+    # target
+    leak        = data.x[:,3]
+    u_target    = (leak).view(-1)
+
+    print(f"\nSTEP {step}")
+    print(f"{'Nodo':<8} {'u_pred':<12} {'u_target':<12} {'diff':<12}")
+    for i in range(len(u_pred)):
+        node_name = idx2node[i]               # nome reale del nodo
+        p = float(u_pred[i])
+        t = float(u_target[i])
+        print(f"{node_name:<12} {p:<12.5f} {t:<12.5f} {p - t:<12.5f}")
+    
+    # Converti lista → array [T, N]
+    A = np.array(anomaly_time_series)   # shape: (num_steps_after_onset, num_nodes)
+
+    # Somma temporale delle anomalie
+    s_u = A.sum(axis=0)                 # shape: (num_nodes,)
+
+    # Ordina i nodi dal più sospetto al meno
+    ranking = np.argsort(-s_u)
+
+    print("\n\n=== TOP 10 nodi più sospetti (con nome reale) ===")
+
+    top_k = 10
+    top_nodes = ranking[:top_k]
+
+    print(f"\n{'Pos':<5} {'Nodo':<15} {'Anomalia cumulata':<20}")
+    print("-"*55)
+
+    for pos, idx in enumerate(top_nodes, start=1):
+        node_name = idx2node[idx]      # 🔥 converti indice → nome reale WK
+        print(f"{pos:<5} {node_name:<15} {s_u[idx]:<20.5f}")
+
+    print(f"\n Nodi reali in leak: {test_env.leak_node_names}")
+    """
 
 
 

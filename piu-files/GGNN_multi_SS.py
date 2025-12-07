@@ -102,15 +102,15 @@ class GGNNModel(nn.Module):
             hidden_state = self.gru(torch.cat((a_in, a_out), dim=-1),
                                     hidden_state)
 
-        # ⭐ output continuo
+        # ⭐ nuovo output continuo
         anomaly = self.linear_o(hidden_state).squeeze(-1)
 
         # forziamo valori >= 0
-        anomaly = F.softplus(anomaly)
+        #anomaly = F.softplus(anomaly)
 
-        anomaly = anomaly * mask
+        #anomaly = anomaly * mask
 
-        return anomaly
+        return anomaly  
      
 
 # ============================================================
@@ -175,50 +175,3 @@ class RandomForestLeakOnsetDetector:
         return self.model.predict_proba(x)[0, 1]
 
 
-class GGNN_LSTM(nn.Module):
-    def __init__(self, attr_size, hidden_size, propag_steps, lstm_hidden=64, lstm_layers=1):
-        super().__init__()
-
-        # GNN per estrazione spaziale
-        self.ggnn = GGNNModel(attr_size, hidden_size, propag_steps)
-
-        # LSTM per modellare la dinamica temporale
-        self.lstm = nn.LSTM(
-            input_size=hidden_size, 
-            hidden_size=lstm_hidden,
-            num_layers=lstm_layers,
-            batch_first=True
-        )
-
-        # layer finale per predire u[k]
-        self.linear_out = nn.Linear(lstm_hidden, 1)
-
-    def forward(self, attr_seq, adj_seq):
-        """
-        attr_seq: lista di tensors [1, N, attr_dim]
-        adj_seq:  lista di tensors [1, N, N]
-        """
-
-        gnn_outputs = []
-
-        # 1) Applica GGNN per ogni timestep
-        for attr, adj in zip(attr_seq, adj_seq):
-            h_t = self.ggnn(attr, adj)             # shape [1, N]
-            h_t = h_t.squeeze(0)                   # → [N]
-            gnn_outputs.append(h_t)
-
-        # 2) Stack temporale: [T, N]
-        H = torch.stack(gnn_outputs, dim=0)        # [T, N]
-
-        # 3) LSTM richiede batch dimension → [1, T, N]
-        H = H.unsqueeze(0)
-
-        lstm_out, _ = self.lstm(H)                 # output: [1, T, lstm_hidden]
-
-        # 4) Prendi l’ultimo timestep
-        z_T = lstm_out[:, -1, :]                   # [1, lstm_hidden]
-
-        # 5) Predizione finale del vettore nodale u[k]
-        # Lo estendiamo a tutti i nodi
-        u_pred = self.linear_out(z_T)              # [1, 1]
-        return u_pred
