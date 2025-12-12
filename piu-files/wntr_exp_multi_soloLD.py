@@ -348,15 +348,15 @@ def run_GGNN(inp_path):
             leak_idx = node2idx[leak_node]
             y[leak_idx] = 1.0
 
-        print(f"\nSTEP {step}")
-        print(f"{'Nodo':<12} {'p_pred':<12} {'target':<12}")
-        print("-"*35)
+        #print(f"\nSTEP {step}")
+        #print(f"{'Nodo':<12} {'p_pred':<12} {'target':<12}")
+        #print("-"*35)
         
         for i in range(len(p_pred)):
             node_name = idx2node[i]
             pp = float(p_pred[i])
             tt = float(y[i])
-            print(f"{node_name:<12} {pp:<12.5f} {tt:<12.5f}")
+            #print(f"{node_name:<12} {pp:<12.5f} {tt:<12.5f}")
 
     # -----------------------------
     #   MEDIA DELLE PROBABILITÀ

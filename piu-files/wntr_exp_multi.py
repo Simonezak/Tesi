@@ -5,11 +5,9 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from wntr_to_pyg import build_pyg_from_wntr, build_nx_graph_from_wntr, compute_topological_node_features, visualize_snapshot
+from wntr_to_pyg import build_pyg_from_wntr, compute_topological_node_features, visualize_snapshot, build_static_graph_from_wntr
 from main_dyn_topologyknown_01 import func_gen_B2_lu
 from topological import compute_polygon_flux, plot_leak_probability_multi, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability, build_M
-from GNN_LD import GNNLeakDetector, train_model
-from GNN_TopoLD import GNNLeakDetectorTopo
 from wntr_to_pyg import build_pyg_time_series
 from topological import plot_edge_s_u, plot_edge_Uhat
 from GGNN_multi import GGNNModel, RandomForestLeakOnsetDetector
@@ -25,7 +23,7 @@ class WNTREnv:
         self.hydraulic_timestep = hydraulic_timestep
         self.num_leaks = num_leaks 
         self.sim = None
-        self.wn = None
+        self.wn = wntr.network.WaterNetworkModel(self.inp_path)
         self.results = None
 
     def reset(self, with_leak=True):
@@ -41,6 +39,7 @@ class WNTREnv:
 
         if with_leak:
             
+            # Prendiamo solo le junctions visto che vogliamo che il leak sia in un nodo
             junctions = [
                 name for name, node in self.wn.nodes()
                 if isinstance(node, wntr.network.elements.Junction)
@@ -50,22 +49,18 @@ class WNTREnv:
             num = min(self.num_leaks, len(junctions))
             self.leak_node_names = np.random.choice(junctions, size=num, replace=False).tolist()
 
-
             # parametri leak
-            area = 0.05
             self.leak_start_step = np.random.randint(5, 11)
 
-
             #self.leak_node_name = "11"
-            print(f"[LEAK] Nodi selezionati per la perdita: {self.leak_node_names}")
-            print(f"[LEAK] Il leak inizierà allo step {self.leak_start_step}")
-
             #self.sim.start_leak(self.leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
             
+            print(f"[LEAK] Nodi selezionati per la perdita: {self.leak_node_names}")
+            print(f"[LEAK] Il leak inizierà allo step {self.leak_start_step}")            
+    
         else:
             print("[INIT] Nessuna perdita inserita in questo episodio.")
 
-        # Inizializzazione simulazione WNTR
 
         self.sim.init_simulation(
             global_timestep=self.hydraulic_timestep,
@@ -74,13 +69,14 @@ class WNTREnv:
 
         return
 
+
 def pyg_to_ggnn_inputs(data, pressure_window):
     """
     Converte un PyG Data + finestra temporale delle pressioni
     in input compatibili con il modello GGNN:
     
     - attr_matrix : tensor [1, N, WINDOW_SIZE]
-    - adj_matrix  : tensor [1, N, N]
+    - adj_matrix  : tensor [1, N, N] Ma l'adiacency matrix non cambia nel tempo vabbe
     """
     
     pressures = torch.stack(pressure_window, dim=1)   # [N, WINDOW_SIZE]
@@ -99,44 +95,22 @@ def pyg_to_ggnn_inputs(data, pressure_window):
 
     return pressures, adj
 
-def build_incidence_matrix(data):
+def build_attr_from_pressure_window(pressure_window):
     """
-    Costruisce la matrice B1 del grafo:
-    B1[nodi, archi], orientata arbitrariamente.
+    Costruisce attr_matrix a partire dalla finestra temporale
+    delle pressioni già estratte.
+
+    pressure_window: list di tensor [N]
+    Ritorna:
+        attr_matrix: [1, N, WINDOW_SIZE]
     """
-    N = data.num_nodes
-    E = data.edge_index.shape[1]
+    # stack temporale: [N, WINDOW_SIZE]
+    attr = torch.stack(pressure_window, dim=1)
 
-    B1 = torch.zeros((N, E), dtype=torch.float32)
+    # aggiungi dimensione batch
+    attr_matrix = attr.unsqueeze(0).float()  # [1, N, WINDOW_SIZE]
 
-    src = data.edge_index[0]
-    dst = data.edge_index[1]
-
-    for e in range(E):
-        s = int(src[e])
-        d = int(dst[e])
-        B1[s, e] = 1.0
-        B1[d, e] = -1.0
-
-    return B1
-
-def localize_leak_udik_nodes(u_vec):
-    u = u_vec.view(-1)
-    N = len(u)
-
-    residuals = []
-
-    # varianza totale
-    total_sq = torch.sum(u*u)
-
-    for i in range(N):
-        # residuo = total_sq - u[i]^2
-        r = total_sq - u[i]**2
-        residuals.append(r.item())
-
-    residuals = np.array(residuals)
-    best_node = int(np.argmin(residuals))
-    return best_node, residuals
+    return attr_matrix
 
 
 
@@ -151,8 +125,9 @@ def run_GGNN(inp_path):
     num_episodes = 5
     max_steps    = 30
     lr           = 1e-3
-    epochs       = 200
-    WINDOW_SIZE = 4
+    epochs       = 200          # numero di epoch della GGNN
+    area = 0.05                 # area dei leak
+    WINDOW_SIZE = 4             # quanti snapshot per ogni batch di training
     
 
     all_snapshots_with_leak = []
@@ -160,22 +135,22 @@ def run_GGNN(inp_path):
 
     env = WNTREnv(inp_path, max_steps=max_steps)
 
-    print("\n=== TRAIN GGNN ===")
+    # costruisci adiacency matrix e indici UNA VOLTA all'inizio dato che non cambiano
+    adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(env.wn)
 
-    # Simulazione WNTR
+    # Inizia Simulazione WNTR
     for ep in range(num_episodes):
         print(f"\n--- Episodio {ep+1}/{num_episodes}")
         
         env.reset(with_leak=True)
         wn, sim = env.wn, env.sim
 
-        episode_feature_vectors = []   # tutti gli step PyG
+        episode_feature_vectors = []
         pressure_window = [] 
 
         for step in range(max_steps):
 
             if step == env.leak_start_step:
-                area = 0.05
                 for leak_node in env.leak_node_names:  
                     env.sim.start_leak(leak_node, leak_area=area, leak_discharge_coefficient=0.75)
 
@@ -183,28 +158,34 @@ def run_GGNN(inp_path):
             results = sim.get_results()
 
             # PyG snapshot
-            data, node2idx, idx2node, _, _ = build_pyg_from_wntr(wn, results)
 
-            # --- PER RF: aggiungi SOLO data (PyG Data)
+            """
             #pressures = data.x[:, 2].cpu().numpy()
             #flows     = data.edge_attr[:, 2].cpu().numpy()
             #vec = np.concatenate([pressures, flows])
 
             #episode_feature_vectors.append(vec)
+            """
 
-            current_pressures = data.x[:, 2].cpu()
+            df_pressure = results.node["pressure"]
+
+            current_pressures = torch.tensor(
+                [df_pressure.loc[:, name].values[-1] for name in node2idx.keys()],
+                dtype=torch.float32
+            )
 
             # aggiorna finestra
             pressure_window.append(current_pressures)
 
+            episode_feature_vectors.append(current_pressures.numpy())
+
             if len(pressure_window) < WINDOW_SIZE:
-                continue   # aspetta finché non c’è abbastanza storia temporale
+                continue
 
             if len(pressure_window) > WINDOW_SIZE:
                 pressure_window.pop(0)
 
-            # salva solo se la finestra è completa
-            episode_feature_vectors.append(current_pressures.numpy())
+            
 
 
             # Label leak per GGNN
@@ -212,12 +193,15 @@ def run_GGNN(inp_path):
                 continue
             #    y = torch.zeros(data.num_nodes, 1)   # NESSUN NODO in leak
             else:
+                df_demand = results.node["demand"]
+                df_leak   = results.node.get("leak_demand", None)
 
-                demand = data.x[:,1]       # colonna demand
-                leak = data.x[:,3]         # colonna leak_demand
+                demand = torch.tensor([df_demand.loc[:, name].values[-1] for name in node2idx.keys()],dtype=torch.float32)
+                leak = torch.tensor([df_leak.loc[:, name].values[-1] for name in node2idx.keys()],dtype=torch.float32)         
                 u = demand + leak          # grandezza fisica reale
 
                 y = u.view(-1,1).float()   # shape [N,1]
+
 
                 """
                 y = torch.zeros(data.num_nodes, 1)
@@ -239,18 +223,12 @@ def run_GGNN(inp_path):
             """
 
             # --- PER GGNN: costruisci sample complesso
-            attr_matrix, adj_matrix = pyg_to_ggnn_inputs(
-                    data, pressure_window=[p for p in pressure_window]
-                )
-
+            attr_matrix = build_attr_from_pressure_window(pressure_window)
 
             all_snapshots_with_leak.append({
                 "attr":    attr_matrix,
                 "adj":     adj_matrix,
-                "y":       y,
-                "data":    data,
-                "node2idx": node2idx,
-                "idx2node": idx2node
+                "y":       y
             })
 
 
@@ -263,8 +241,6 @@ def run_GGNN(inp_path):
             "leak_start": env.leak_start_step
         })
 
-
-                
 
     # ============================================================
     #            TRAIN RANDOM FOREST LEAK-ONSET
@@ -291,7 +267,7 @@ def run_GGNN(inp_path):
     print("\n=== TRAINING GGNN ===")
 
     for epoch in range(epochs):
-        total_loss = 0
+        
         model.train()
 
         sample = np.random.choice(all_snapshots_with_leak)
@@ -315,16 +291,16 @@ def run_GGNN(inp_path):
 
 
 
-
-    # 4️⃣ TEST su nuovo episodio
-
     print("\n\n=== TEST PHASE ===")
 
     test_env = WNTREnv(inp_path, max_steps=max_steps)
+
+    adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(test_env.wn)
     test_env.reset(with_leak=True)
+
     wn, sim = test_env.wn, test_env.sim
 
-    test_snapshots = []   # 🔥 LISTA DI TUTTI GLI SNAPSHOT
+    test_snapshots = []
     test_pressure_window = []
 
 
@@ -332,7 +308,7 @@ def run_GGNN(inp_path):
     # 1) LEAK ONSET DETECTION (RandomForest)
     # --------------------
 
-    print("\n--- Leak onset detection (Random Forest) ---")
+    print("\n--- Leak detection (Random Forest) ---")
 
     onset_scores = []
 
@@ -340,36 +316,35 @@ def run_GGNN(inp_path):
 
         # attiva leak nel momento corretto
         if step == test_env.leak_start_step:
-            area = 0.05
             for leak_node in test_env.leak_node_names:
                 test_env.sim.start_leak(leak_node, leak_area=area, leak_discharge_coefficient=0.75)
 
         sim.step_sim()
         results = sim.get_results()
 
-        # conversione a PyG
-        data, node2idx, idx2node, _, _ = build_pyg_from_wntr(wn, results)
+        df_pressure = results.node["pressure"]
+
+        pressures = np.array([
+            df_pressure.loc[:, name].values[-1]
+            for name in node2idx.keys()
+        ])
+
 
         # salvalo in lista
         test_snapshots.append({
-            "step": step,
-            "data": data,
-            "node2idx": node2idx,
-            "idx2node": idx2node,
-            "results": results,
+            "pressures": pressures
         })
 
     for snap in test_snapshots:
-        data = snap["data"]
-        prob = rf.predict(data)
+        data = snap["pressures"]
+        prob = rf.predict(data) # da vedere
         onset_scores.append(prob)
 
     predicted_onset = int(np.argmax(onset_scores))
-    print(f"\n ⏱️ Inizio leak stimato allo step: {predicted_onset}")
+    print(f"\n Inizio leak stimato allo step: {predicted_onset}")
 
     # Lista in cui salveremo l’anomalia stimata a ogni step successivo
     anomaly_time_series = []
-
 
     # --------------------
     # 2) LEAK LOCALIZATION (GGNN) - PER OGNI STEP DOPO ONSET
@@ -378,47 +353,40 @@ def run_GGNN(inp_path):
     print("\n--- Leak localization (GGNN) ---")
 
     for snap in test_snapshots[predicted_onset:]:
-        
-        step = snap["step"]
-        data = snap["data"]
-        node2idx = snap["node2idx"]
-        idx2node = snap["idx2node"]
 
-        current_pressures = data.x[:,2].cpu()
+        current_pressures = torch.tensor(snap["pressures"], dtype=torch.float32)  # [N]
         test_pressure_window.append(current_pressures)
 
         if len(test_pressure_window) > WINDOW_SIZE:
             test_pressure_window.pop(0)
-
         if len(test_pressure_window) < WINDOW_SIZE:
             continue
 
-        attr_matrix, adj_matrix = pyg_to_ggnn_inputs(
-            data, pressure_window=[p for p in test_pressure_window]
-        )
-
-
+        attr_matrix = build_attr_from_pressure_window(test_pressure_window)  # [1,N,W]
         with torch.no_grad():
             u_pred = model(attr_matrix, adj_matrix).view(-1)
 
         anomaly_time_series.append(u_pred.cpu().numpy())
 
+        """
         # target
-        demand      = data.x[:,1]
-        leak        = data.x[:,3]
+        df_demand   = results.node["demand"]
+        df_leak     = results.node.get("leak_demand", None)
+
+        demand    = np.array([df_demand.loc[:, name].values[-1]   for name in node2idx.keys()], dtype=np.float32)
+        leak      = np.array([df_leak.loc[:, name].values[-1]     for name in node2idx.keys()], dtype=np.float32) if df_leak is not None else np.zeros_like(demand)
+
         u_target    = (demand + leak).view(-1)
 
-        #cprint(f"\nSTEP {step}")
-        #print(f"{'Nodo':<8} {'u_pred':<12} {'u_target':<12} {'diff':<12}")
+        
         for i in range(len(u_pred)):
             p = float(u_pred[i])
             t = float(u_target[i])
-            #print(f"{i:<8} {p:<12.5f} {t:<12.5f} {p - t:<12.5f}")
+        """
 
     print("\n\n=== RANKING NODI PER ANOMALIA PERSISTENTE (basato su u_pred) ===")
 
-    # A: [T, N]   T = numero di step dopo onset, N = num_nodi
-    A = np.array(anomaly_time_series)   # float64
+    A = np.array(anomaly_time_series)
     T, N = A.shape
 
     # 1) soglia globale per considerare un nodo "attivo"
@@ -451,9 +419,8 @@ def run_GGNN(inp_path):
     print(f"\n{'Nodo_idx':<10} {'score':<12} {'count_active':<15} {'mean_active':<15}")
     print("-" * 60)
     for idx in ranking:
-        print(f"{idx:<10} {score[idx]:<12.5f} {persist_counts[idx]:<15} {mean_when_active[idx]:<15.5f}")
+        print(f"{idx2node[idx]:<10} {score[idx]:<12.5f} {persist_counts[idx]:<15} {mean_when_active[idx]:<15.5f}")
 
-    print("\nNodo più sospetto (anomalia persistente):", ranking[0])
     print("Nodi leak reali:", test_env.leak_node_names)
 
 

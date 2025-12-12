@@ -124,24 +124,34 @@ def safe_get(df, col, default=0.0):
 
 def build_pyg_from_wntr(wn, results, cfg: GraphFeatureConfig = GraphFeatureConfig()):
     # ---- nodi ----
-    node_names: List[str] = [name for name, _ in wn.nodes()]
-    node2idx = {name: i for i, name in enumerate(node_names)}
+    junction_names: List[str] = []
+
+    for name, node in wn.nodes():
+        if isinstance(node, wntr.network.elements.Junction):
+            junction_names.append(name)
+
+    # Mappa nome → indice PyG
+    node2idx = {name: i for i, name in enumerate(junction_names)}
     idx2node = {i: name for name, i in node2idx.items()}
+    N = len(junction_names)
 
     # Lettura attributi di ogni nodo
     elev, demand, pressure, leak_dem = [], [], [], []
-    df_demand: Optional[pd.DataFrame] = results.node.get("demand", None)
-    df_pressure: Optional[pd.DataFrame] = results.node.get("pressure", None)
-    df_leak: Optional[pd.DataFrame] = results.node.get("leak_demand", None)
 
-    for name in node_names:
+    df_demand: Optional[pd.DataFrame]   = results.node.get("demand", None)
+    df_pressure: Optional[pd.DataFrame] = results.node.get("pressure", None)
+    df_leak: Optional[pd.DataFrame]     = results.node.get("leak_demand", None)
+
+    for name in junction_names:
         n = wn.get_node(name)
         elev.append(float(getattr(n, "elevation", 0.0)))
         demand.append(safe_get(df_demand, name))
         pressure.append(safe_get(df_pressure, name))
         leak_dem.append(safe_get(df_leak, name))
-        x = np.stack([elev, demand, pressure, leak_dem], axis=1)
-        x_torch = torch.tensor(x, dtype=torch.float32)
+
+    x = np.stack([elev, demand, pressure, leak_dem], axis=1)
+    x_torch = torch.tensor(x, dtype=torch.float32)
+
 
     # ---- archi (pipes) ----
     edge_index_list: List[Tuple[int, int]] = []
@@ -152,44 +162,88 @@ def build_pyg_from_wntr(wn, results, cfg: GraphFeatureConfig = GraphFeatureConfi
     lengths, diameters, flows, starts, ends, statuses = [], [], [], [], [], []
 
 
-    for pipe_name in wn.pipe_name_list:
+    for pipe_name in wn.pipe_name_list:       # funziona anche con pump/valves se vuoi aggiungere
         pipe = wn.get_link(pipe_name)
-        u_name, v_name = pipe.start_node_name, pipe.end_node_name
+        u_name = pipe.start_node_name
+        v_name = pipe.end_node_name
+
+        # 🔥 Escludi archi che toccano serbatoi/reservoir
         if u_name not in node2idx or v_name not in node2idx:
             continue
 
-        u, v = node2idx[u_name], node2idx[v_name]
-        length = float(getattr(pipe, "length", 0.0))
+        u = node2idx[u_name]
+        v = node2idx[v_name]
+
+        length   = float(getattr(pipe, "length", 0.0))
         diameter = float(getattr(pipe, "diameter", 0.0))
-        flow = safe_get(df_flow, pipe_name)
+        flow     = safe_get(df_flow, pipe_name)
 
         # aggiungi forward edge
         edge_index_list.append((u, v))
         edge_attrs.append([length, diameter, flow])
 
-        lengths.append(length)
-        diameters.append(diameter)
-        flows.append(flow)
-        starts.append(u_name)
-        ends.append(v_name)
+        # aggiungi backward edge (grafo non orientato oppure orientato 2-way)
+        edge_index_list.append((v, u))
+        edge_attrs.append([length, diameter, flow])
 
-        # se grafo non orientato, aggiungi anche reverse
-        if cfg.undirected:
-            edge_index_list.append((v, u))
-            edge_attrs.append([length, diameter, flow])
+    edge_index = torch.tensor(edge_index_list, dtype=torch.long).t().contiguous()
+    edge_attr  = torch.tensor(edge_attrs, dtype=torch.float32)
 
-     
-    # ---- costruisci Data PyG ----
-    edge_index = torch.tensor(np.array(edge_index_list, dtype=np.int64).T, dtype=torch.long)
-    edge_attr = torch.tensor(np.array(edge_attrs, dtype=np.float32), dtype=torch.float32)
+    data = Data(
+        x=x_torch,                # [N, 4]
+        edge_index=edge_index,    # [2, E]
+        edge_attr=edge_attr       # [E, 3]
+    )
 
-    data = Data(x=x_torch, edge_index=edge_index, edge_attr=edge_attr)
+    data.node2idx = node2idx
+    data.idx2node = idx2node
 
-    edge_names = wn.pipe_name_list
-    edge2idx = {name: i for i, name in enumerate(edge_names)}
-    idx2edge = {i: name for name, i in edge2idx.items()}
+    return data, node2idx, idx2node
 
-    return data, node2idx, idx2node, edge2idx, idx2edge
+
+
+def build_static_graph_from_wntr(wn):
+    """
+    Costruisce:
+    - adjacency matrix [1, N, N]
+    - node2idx, idx2node
+    usando SOLO le junctions.
+    """
+
+    # --- seleziona solo junctions ---
+    junction_names = [
+        name for name, node in wn.nodes()
+        if isinstance(node, wntr.network.elements.Junction)
+    ]
+
+    node2idx = {name: i for i, name in enumerate(junction_names)}
+    idx2node = {i: name for name, i in node2idx.items()}
+    N = len(junction_names)
+
+    # --- adjacency matrix ---
+    adj = torch.zeros((N, N), dtype=torch.float32)
+
+    for pipe_name in wn.pipe_name_list:
+        pipe = wn.get_link(pipe_name)
+        u_name = pipe.start_node_name
+        v_name = pipe.end_node_name
+
+        # scarta pipe che toccano tank / reservoir
+        if u_name not in node2idx or v_name not in node2idx:
+            continue
+
+        u = node2idx[u_name]
+        v = node2idx[v_name]
+
+        adj[u, v] = 1.0
+        adj[v, u] = 1.0   # grafo non orientato
+
+    # aggiungi dimensione batch
+    adj_matrix = adj.unsqueeze(0)  # [1, N, N]
+
+    return adj_matrix, node2idx, idx2node
+
+
 
 
 def compute_topological_node_features(wn, results, max_cycle_length: int = 8, abs_flux: bool = False):

@@ -147,6 +147,7 @@ class RandomForestLeakOnsetDetector:
         #vector = np.concatenate([pressures, flows])
         return pressures
 
+
     def fit(self, snapshots):
         X, Y = [], []
 
@@ -171,7 +172,19 @@ class RandomForestLeakOnsetDetector:
         print("RandomForest addestrato.")
 
     def predict(self, snapshot):
-        x = self.extract_features(snapshot).reshape(1, -1)
+        if hasattr(snapshot, "cpu"):  # torch -> numpy
+            snapshot = snapshot.cpu().numpy()
+
+        snapshot = np.asarray(snapshot)
+
+        # Se è un vettore di pressioni [N], usalo direttamente come feature
+        # (oppure se vuoi ancora fare feature engineering, lascialo a extract_features)
+        if snapshot.ndim == 1:
+            x = snapshot.reshape(1, -1)
+        else:
+            # se già arriva (1, N) o simile
+            x = snapshot.reshape(1, -1)
+
         return self.model.predict_proba(x)[0, 1]
 
 
