@@ -124,10 +124,10 @@ def run_GGNN(inp_path):
 
     num_episodes = 20
     max_steps    = 30
-    lr           = 3e-4
-    epochs       = 300          # numero di epoch della GGNN
+    lr           = 1e-3
+    epochs       = 200          # numero di epoch della GGNN
     area = 0.05                 # area dei leak
-    WINDOW_SIZE = 4             # quanti snapshot per ogni batch di training
+    WINDOW_SIZE = 1             # quanti snapshot per ogni batch di training
     
 
     all_snapshots_with_leak = []
@@ -353,7 +353,7 @@ def run_GGNN(inp_path):
 
         anomaly_time_series.append(u_pred.cpu().numpy())
 
-        """
+
         # target
         df_demand = results.node["demand"]
         df_leak = results.node.get("leak_demand", None)
@@ -379,32 +379,27 @@ def run_GGNN(inp_path):
             print(f"Nodo {idx2node[i]}: u_pred={p:.5f}  u_target={t:.5f}  diff={p - t:.5f}")
         
         print("-" * 60)
-    """
+
 
     print("\n\n=== RANKING NODI PER ANOMALIA PERSISTENTE (basato su u_pred) ===")
 
     A = np.array(anomaly_time_series)
     T, N = A.shape
 
-    # 1) soglia globale per considerare un nodo "attivo"
-    #    ad es. una frazione del max globale
-    global_max = A.mean(axis=1)
-    threshold = global_max # puoi regolarla
+    #global_max = A.mean(axis=1)
+    threshold = 0.01
 
-    # 2) per ogni nodo: quante volte supera la soglia, e quanto è alto in media
-    active = A > threshold[:, None]     # [T, N]
-    persist_counts = active.sum(axis=0)   # [N]
+    # active = A > threshold[:, None]
+    active = A > threshold
+    persist_counts = active.sum(axis=0)
 
-    #    nodi con leak tendono ad avere molti step attivi e valori non banali
-    score = persist_counts
-
-    # 4) ranking decrescente di score
-    ranking = np.argsort(-score)
+    # ranking decrescente di score
+    ranking = np.argsort(-persist_counts)
 
     print(f"\n{'Nodo_idx':<10} {'score':<12}>")
     print("-" * 30)
     for idx in ranking:
-        print(f"{idx2node[idx]:<10} {score[idx]:<12.5f}")
+        print(f"{idx2node[idx]:<10} {persist_counts[idx]:<12.5f}")
 
     print("Nodi leak reali:", test_env.leak_node_names)
 
@@ -416,5 +411,5 @@ def run_GGNN(inp_path):
 
 
 if __name__ == "__main__":
-    run_GGNN(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\20x20_branched.inp")
+    run_GGNN(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy.inp")
 
