@@ -9,48 +9,64 @@ from wntr_exp_multi import (
     build_static_graph_from_wntr
 )
 
-# 🔹 IMPORT DEL MODELLO LSTM
-from prova_LSTM import GGNNEmbeddingLSTM
-from GGNN_multi import GGNNModel
+# ============================================================
+#  IMPORT MODELLO (STESSO DEL TRAINING)
+# ============================================================
+
+from prova_LSTM import (
+    GGNNEncoder,
+    GGNN_NodeLSTM_Localizer
+)
+
+def ranking_position_score(ranking_nodes, leak_nodes):
+    """
+    Score basato sulla posizione finale dei leak nella classifica.
+    1° -> 1.0, 2° -> 0.5, k° -> 1/k
+    """
+
+    score = 0.0
+
+    for ln in leak_nodes:
+        if ln in ranking_nodes:
+            rank = ranking_nodes.index(ln)  # 0-based
+            score += 1.0 / (rank + 1)
+
+    return score
+
 
 # ============================================================
 #                   LOAD MODELS
 # ============================================================
 
-def load_models_embedding_lstm(ckpt_path, rf_model_path):
-    ckpt = torch.load(ckpt_path, map_location="cpu")
+def load_models_embedding_lstm(ckpt_path, rf_model_path, device="cpu"):
+
+    ckpt = torch.load(ckpt_path, map_location=device)
     cfg = ckpt["config"]
 
-    # ---- GGNN (embedding) ----
-    ggnn = GGNNModel(
+    # ---- GGNN Encoder ----
+    ggnn_encoder = GGNNEncoder(
         attr_size=1,
         hidden_size=cfg["ggnn_hidden"],
         propag_steps=cfg["ggnn_propag"]
-    )
-
-    # congelato (come in training)
-    for p in ggnn.parameters():
-        p.requires_grad = False
+    ).to(device)
 
     # ---- Modello completo ----
-    model = GGNNEmbeddingLSTM(
-        ggnn=ggnn,
+    model = GGNN_NodeLSTM_Localizer(
+        ggnn_encoder=ggnn_encoder,
+        hidden_size=cfg["ggnn_hidden"],
         lstm_hidden=cfg["lstm_hidden"]
-    )
+    ).to(device)
 
     model.load_state_dict(ckpt["model_state_dict"])
-    model.to("cpu")
     model.eval()
 
-    # ---- RF ----
-    import pickle
+    # ---- Random Forest (leak onset) ----
     with open(rf_model_path, "rb") as f:
         rf = pickle.load(f)
 
-    print("[OK] Modello GGNN-embedding + LSTM caricato")
+    print("[OK] Modello GGNN + Node-LSTM caricato correttamente")
 
-    return model, rf, cfg["temp_window"]
-
+    return model, rf
 
 
 # ============================================================
@@ -62,24 +78,28 @@ def run_single_test_episode_lstm(
     model,
     rf,
     max_steps,
-    temp_window,
-    leak_area
+    leak_area,
+    device="cpu"
 ):
     """
-    IDENTICO a run_single_test_episode,
-    ma usa GGNN + LSTM per la localizzazione
+    Test di un singolo episodio:
+    - RF per leak onset
+    - GGNN + LSTM per localizzazione
     """
 
-    env = WNTREnv(inp_path, max_steps=max_steps, num_leaks=2)
+    env = WNTREnv(inp_path, max_steps=max_steps)
     adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(env.wn)
+    adj_matrix = adj_matrix.to(device)
 
-    env.reset(with_leak=True)
+    n_leaks = np.random.randint(1, 3)
+    env.reset(num_leaks=n_leaks)
     sim = env.sim
 
     # ------------------------
     # Run WNTR simulation
     # ------------------------
     for step in range(max_steps):
+
         if step == env.leak_start_step:
             for ln in env.leak_node_names:
                 sim.start_leak(
@@ -87,6 +107,7 @@ def run_single_test_episode_lstm(
                     leak_area=leak_area,
                     leak_discharge_coefficient=0.75
                 )
+
         sim.step_sim()
 
     results = sim.get_results()
@@ -94,7 +115,7 @@ def run_single_test_episode_lstm(
     cols = list(node2idx.keys())
 
     # ------------------------
-    # Leak onset detection
+    # Leak onset detection (RF)
     # ------------------------
     onset_scores = []
 
@@ -103,45 +124,46 @@ def run_single_test_episode_lstm(
         onset_scores.append(rf.predict(pressures))
 
     predicted_onset = int(np.argmax(onset_scores))
-
-    if predicted_onset > 40:
-        predicted_onset = 40
+    predicted_onset = min(predicted_onset, max_steps - 1)
 
     true_onset = env.leak_start_step
     det_error = leak_detection_error(predicted_onset, true_onset)
 
     # ------------------------
-    # Leak localization (GGNN embedding + LSTM)
+    # Leak localization (GGNN + LSTM)
     # ------------------------
-    pressure_window = []
+    pressure_seq = []
     anomaly_time_series = []
 
     for t in range(predicted_onset, len(df_pressure)):
+
         p = torch.tensor(
-            df_pressure.iloc[t][cols].to_numpy(dtype=np.float32)
+            df_pressure.iloc[t][cols].to_numpy(dtype=np.float32),
+            dtype=torch.float32,
+            device=device
         )
-        pressure_window.append(p)
 
-        if len(pressure_window) < temp_window:
-            continue
-        if len(pressure_window) > temp_window:
-            pressure_window.pop(0)
+        pressure_seq.append(p)
 
-        # costruisci sequenza attr per GGNN
-        attr_seq = [pw.view(1, -1, 1) for pw in pressure_window]
+        # 🔹 tutta la storia fino a t
+        attr_seq = [ps.view(1, -1, 1) for ps in pressure_seq]
 
         with torch.no_grad():
-            u_pred = model(attr_seq, adj_matrix)  # [N]
+            scores = model(attr_seq, adj_matrix)
 
-        anomaly_time_series.append(u_pred.cpu().numpy())
+        anomaly_time_series.append(scores.cpu().numpy())
 
     # ------------------------
-    # score_per_node (IDENTICO)
+    # Score per nodo
     # ------------------------
-    A = np.array(anomaly_time_series)           # [T, N]
-    score_per_node = np.sum(np.abs(A), axis=0)  # [N]
+    A = np.array(anomaly_time_series)      # [T, N]
+    score_per_node = np.sum(np.abs(A), axis=0)
 
-    return score_per_node, idx2node, env.leak_node_names, det_error
+    ranking_idx = np.argsort(-score_per_node)
+    ranking_nodes = [idx2node[i] for i in ranking_idx]
+
+
+    return score_per_node, idx2node, env.leak_node_names, det_error, ranking_idx, ranking_nodes
 
 
 # ============================================================
@@ -152,10 +174,10 @@ def run_multiple_tests_lstm(
     inp_path,
     model,
     rf,
-    temp_window,
     num_test=20,
     max_steps=50,
-    leak_area=0.1
+    leak_area=0.1,
+    device="cpu"
 ):
 
     localization_scores = []
@@ -164,18 +186,17 @@ def run_multiple_tests_lstm(
     for test_id in range(num_test):
         print(f"\n=== TEST {test_id+1}/{num_test} ===")
 
-        score_per_node, idx2node, leak_nodes, det_error = run_single_test_episode_lstm(
+        score_per_node, idx2node, leak_nodes, det_error, ranking_idx, ranking_nodes = run_single_test_episode_lstm(
             inp_path=inp_path,
             model=model,
             rf=rf,
             max_steps=max_steps,
-            temp_window=temp_window,
-            leak_area=leak_area
+            leak_area=leak_area,
+            device=device
         )
 
-        loc_score = ranking_score_lexicographic(
-            score_per_node,
-            idx2node,
+        loc_score = ranking_position_score(
+            ranking_nodes,
             leak_nodes
         )
 
@@ -211,19 +232,30 @@ def run_multiple_tests_lstm(
 
 if __name__ == "__main__":
 
-    inp_path = r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\20x20_branched.inp"
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    embedding_lstm_path = (r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\saved_models\ggnn_embedding_lstm.pt")
-    rf_path   = r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\saved_models\rf_leak_onset.pkl"
+    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
 
-    model, rf, temp_window = load_models_embedding_lstm(embedding_lstm_path,rf_path)
+    embedding_lstm_path = (
+        "/home/zagaria/Tesi/Tesi/piu-files/saved_models/ggnn_encoder_node_lstm.pt"
+    )
+
+    rf_path = (
+        "/home/zagaria/Tesi/Tesi/piu-files/saved_models/rf_leak_onset.pkl"
+    )
+
+    model, rf = load_models_embedding_lstm(
+        embedding_lstm_path,
+        rf_path,
+        device=DEVICE
+    )
 
     run_multiple_tests_lstm(
         inp_path=inp_path,
         model=model,
         rf=rf,
-        temp_window=temp_window,
         num_test=30,
         max_steps=50,
-        leak_area=0.1
+        leak_area=0.1,
+        device=DEVICE
     )

@@ -81,8 +81,8 @@ def run_GGNN(inp_path):
 
     num_episodes = 20
     max_steps    = 30
-    lr           = 3e-4
-    area         = 0.05                 
+    lr           = 1e-2
+    area         = 0.1                 
     epochs       = 300
 
     all_snapshots_with_leak = []
@@ -349,5 +349,5 @@ def run_GGNN(inp_path):
 
 
 if __name__ == "__main__":
-    run_GGNN(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\20x20_branched.inp")
+    run_GGNN(inp_path=r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp")
 

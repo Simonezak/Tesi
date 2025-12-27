@@ -208,7 +208,7 @@ def run_GNN_topo_comparison_multi(inp_path):
             sim.step_sim()
             results = sim.get_results()
 
-            data, node2idx, idx2node, edge2idx, idx2edge = build_pyg_from_wntr(wn, results)
+            data, node2idx, idx2node = build_pyg_from_wntr(wn, results)
 
             # --- Calcolo feature topologiche
             topo_feats, node_order, B1, B2 = compute_topological_node_features(wn, results)
@@ -296,7 +296,7 @@ def run_GNN_topo_comparison_multi(inp_path):
     plot_cell_complex_flux(G, coords, selected_cycles, f_polygons_abs, vmin_p, vmax_p, leak_node, test=True)
 
 
-    data, node2idx, idx2node, edge2idx, idx2edge = build_pyg_from_wntr(wn, results)
+    data, node2idx, idx2node = build_pyg_from_wntr(wn, results)
 
     # ==========================================
     # EVALUATE: Modello Plain
@@ -371,10 +371,10 @@ def run_GGNN(inp_path):
         2) non ha topological layer
     """
 
-    num_episodes = 5
-    max_steps    = 30
+    num_episodes = 25
+    max_steps    = 100
     lr           = 1e-3
-    epochs       = 50
+    epochs       = 200
 
     all_snapshots_with_leak = []
     rf_training_data = []         # per RandomForest
@@ -403,7 +403,7 @@ def run_GGNN(inp_path):
             results = sim.get_results()
 
             # PyG snapshot
-            data, node2idx, idx2node, _, _ = build_pyg_from_wntr(wn, results)
+            data, node2idx, idx2node = build_pyg_from_wntr(wn, results)
 
             # --- PER RF: aggiungi SOLO data (PyG Data)
             #pressures = data.x[:, 2].cpu().numpy()
@@ -533,7 +533,7 @@ def run_GGNN(inp_path):
         sim.step_sim()
         results = sim.get_results()
 
-        data, _, _, _, _ = build_pyg_from_wntr(wn, results)
+        data, _, _ = build_pyg_from_wntr(wn, results)
 
         prob = rf.predict(data)
         onset_scores.append(prob)
@@ -551,7 +551,7 @@ def run_GGNN(inp_path):
     print("\n--- Leak localization (GGNN) ---")
 
     results = sim.get_results()
-    data, node2idx, idx2node, _, _ = build_pyg_from_wntr(wn, results)
+    data, node2idx, idx2node = build_pyg_from_wntr(wn, results)
     attr_matrix, adj_matrix = pyg_to_ggnn_inputs(data)
 
     model.eval()
@@ -574,5 +574,5 @@ def run_GGNN(inp_path):
 
 
 if __name__ == "__main__":
-    run_GGNN(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\Jilin_copy.inp")
+    run_GGNN(inp_path=r"/home/zagaria/Tesi/Tesi/Networks-found/Jilin_copy.inp")
 

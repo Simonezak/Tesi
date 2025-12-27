@@ -106,6 +106,7 @@ class GGNNModel(nn.Module):
         anomaly = self.linear_o(hidden_state).squeeze(-1)
 
         return anomaly
+
      
 
 # ============================================================
@@ -120,7 +121,7 @@ class RandomForestLeakOnsetDetector:
     è appena iniziato un LEAK.
     """
 
-    def __init__(self, n_trees=200, max_depth=12,min_samples_split=4,min_samples_leaf=2,class_weight="balanced",random_state=42):
+    def __init__(self, n_trees=240, max_depth=20,min_samples_split=2,min_samples_leaf=7,class_weight="balanced",random_state=42):
         
         self.model = RandomForestClassifier(
             n_estimators=n_trees,

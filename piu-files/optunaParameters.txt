@@ -57,3 +57,36 @@ Con questi parametri 20x20_branch ha trovato sia primo che secondo
     Std score : 0.23026466
     Min score : 0.50675234
     Max score : 1.50101483
+
+
+Optuna RF:
+
+Trial 10 finished with value: 10.833333333333334 and parameters: {'n_trees': 237, 'max_depth': 10, 'min_samples_split': 5, 'min_samples_leaf': 4, 'threshold': 0.1522140117962832}. 
+Best is trial 10 with value: 10.833333333333334
+
+Trial 13 finished with value: 19.1 and parameters: {'n_trees': 312, 'max_depth': 4, 'min_samples_split': 7, 'min_samples_leaf': 3, 'threshold': 0.125578770614014}.
+Best is trial 10 with value: 10.833333333333334
+
+Trial 29 finished with value: 13.033333333333333 and parameters: {'n_trees': 139, 'max_depth': 15, 'min_samples_split': 8, 'min_samples_leaf': 5, 'threshold': 0.4035523894582361}. 
+Best is trial 10 with value: 10.833333333333334.
+
+    === OPTUNA RF FINISHED ===
+    Best mean |Δt|: 10.833333333333334
+    Best params:
+    n_trees: 237
+    max_depth: 10
+    min_samples_split: 5
+    min_samples_leaf: 4
+    threshold: 0.1522140117962832
+
+Trial 41 finished with value: 6.1 and parameters: {'n_trees': 259, 'max_depth': 22, 'min_samples_split': 3, 'min_samples_leaf': 5}. 
+Best is trial 36 with value: 5.35.   
+
+Trial 36 finished with value: 5.35 and parameters: {'n_trees': 240, 'max_depth': 13, 'min_samples_split': 2, 'min_samples_leaf': 5}. 
+Best is trial 36 with value: 5.35.
+
+Trial 34 finished with value: 8.1 and parameters: {'n_trees': 282, 'max_depth': 10, 'min_samples_split': 5, 'min_samples_leaf': 5}. 
+Best is trial 34 with value: 8.1.
+
+Trial 46 finished with value: 5.15 and parameters: {'n_trees': 283, 'max_depth': 23, 'min_samples_split': 4, 'min_samples_leaf': 7}. 
+Best is trial 46 with value: 5.15.

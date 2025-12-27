@@ -206,10 +206,10 @@ def run_multiple_tests(
 # ============================================================
 
 if __name__ == "__main__":
-    inp_path = r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\20x20_branched.inp"
+    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
 
-    ggnn_path = r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\saved_models\ggnn_model.pt"
-    rf_path   = r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\saved_models\rf_leak_onset.pkl"
+    ggnn_path = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/ggnn_model.pt"
+    rf_path   = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/rf_leak_onset.pkl"
 
 
     model, rf = load_models(ggnn_ckpt_path=ggnn_path,rf_model_path=rf_path)
