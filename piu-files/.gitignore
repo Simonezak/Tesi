@@ -1,0 +1,20 @@
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ===== Virtual env =====
+venv/
+.venv/
+
+# ===== Old / backup =====
+ZZ_old_files/
+
+# ===== Saved models (opzionale) =====
+saved_models/*.pt
+saved_models/*.pth
+saved_models/*.pkl
+
+# ===== OS =====
+.DS_Store

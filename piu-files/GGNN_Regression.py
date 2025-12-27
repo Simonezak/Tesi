@@ -103,15 +103,10 @@ class GGNNModel(nn.Module):
                                     hidden_state)
 
         # ⭐ output continuo
-        #anomaly = self.linear_o(hidden_state).squeeze(-1)
+        anomaly = self.linear_o(hidden_state).squeeze(-1)
 
-        # forziamo valori >= 0
-        #anomaly = F.softplus(anomaly)
+        return anomaly
 
-        #anomaly = anomaly * mask
-
-        #return anomaly
-        return hidden_state.squeeze(0)
      
 
 # ============================================================
@@ -126,7 +121,7 @@ class RandomForestLeakOnsetDetector:
     è appena iniziato un LEAK.
     """
 
-    def __init__(self, n_trees=200, max_depth=12,min_samples_split=4,min_samples_leaf=2,class_weight="balanced",random_state=42):
+    def __init__(self, n_trees=240, max_depth=20,min_samples_split=2,min_samples_leaf=7,class_weight="balanced",random_state=42):
         
         self.model = RandomForestClassifier(
             n_estimators=n_trees,
@@ -147,6 +142,7 @@ class RandomForestLeakOnsetDetector:
         #flows     = snapshot.edge_attr[:, 2].cpu().numpy()  # flowrate
         #vector = np.concatenate([pressures, flows])
         return pressures
+
 
     def fit(self, snapshots):
         X, Y = [], []
@@ -172,7 +168,19 @@ class RandomForestLeakOnsetDetector:
         print("RandomForest addestrato.")
 
     def predict(self, snapshot):
-        x = self.extract_features(snapshot).reshape(1, -1)
+        if hasattr(snapshot, "cpu"):  # torch -> numpy
+            snapshot = snapshot.cpu().numpy()
+
+        snapshot = np.asarray(snapshot)
+
+        # Se è un vettore di pressioni [N], usalo direttamente come feature
+        # (oppure se vuoi ancora fare feature engineering, lascialo a extract_features)
+        if snapshot.ndim == 1:
+            x = snapshot.reshape(1, -1)
+        else:
+            # se già arriva (1, N) o simile
+            x = snapshot.reshape(1, -1)
+
         return self.model.predict_proba(x)[0, 1]
 
 
@@ -195,36 +203,31 @@ class GGNN_LSTM(nn.Module):
         self.linear_out = nn.Linear(lstm_hidden, 1)
 
     def forward(self, attr_seq, adj_seq):
+        """
+        attr_seq: lista di tensors [1, N, attr_dim]
+        adj_seq:  lista di tensors [1, N, N]
+        """
 
-        # attr_seq : list of [1, N, 1]
-        # adj_seq  : list of [1, N, N]
+        gnn_outputs = []
 
-        node_embeddings_over_time = []   # will become [T, N, hidden_size]
-
+        # 1) Applica GGNN per ogni timestep
         for attr, adj in zip(attr_seq, adj_seq):
-            H_t = self.ggnn(attr, adj)       # [N, hidden_size]
-            node_embeddings_over_time.append(H_t)
+            h_t = self.ggnn(attr, adj)             # shape [1, N]
+            h_t = h_t.squeeze(0)                   # → [N]
+            gnn_outputs.append(h_t)
 
-        # Stack → [T, N, hidden_size]
-        H = torch.stack(node_embeddings_over_time, dim=0)
+        # 2) Stack temporale: [T, N]
+        H = torch.stack(gnn_outputs, dim=0)        # [T, N]
 
-        # We must feed EACH NODE into its own LSTM sequence:
-        T, N, Hdim = H.shape
+        # 3) LSTM richiede batch dimension → [1, T, N]
+        H = H.unsqueeze(0)
 
-        # Output vector per node
-        outputs = []
+        lstm_out, _ = self.lstm(H)                 # output: [1, T, lstm_hidden]
 
-        # iterate over nodes
-        for i in range(N):
-            # Sequence for node i: [T, hidden_size]
-            node_seq = H[:, i, :].unsqueeze(0)   # [1, T, hidden_size]
+        # 4) Prendi l’ultimo timestep
+        z_T = lstm_out[:, -1, :]                   # [1, lstm_hidden]
 
-            lstm_out, _ = self.lstm(node_seq)    # [1, T, lstm_hidden]
-            last = lstm_out[:, -1, :]            # [1, lstm_hidden]
-
-            u_i = self.linear_out(last).squeeze()  # scalar
-            outputs.append(u_i)
-
-        # Final output: [N]
-        return torch.stack(outputs, dim=0)
-
+        # 5) Predizione finale del vettore nodale u[k]
+        # Lo estendiamo a tutti i nodi
+        u_pred = self.linear_out(z_T)              # [1, 1]
+        return u_pred

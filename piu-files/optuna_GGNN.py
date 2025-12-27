@@ -7,7 +7,7 @@ import torch.nn as nn
 # ===============================
 # IMPORT DAL TUO PROGETTO
 # ===============================
-from wntr_exp_multi import (
+from wntr_exp_Regression import (
     WNTREnv,
     GGNNModel,
     build_attr_from_pressure_window,

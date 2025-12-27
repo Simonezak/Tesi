@@ -3,13 +3,13 @@ import pickle
 import numpy as np
 from optuna_GGNN import ranking_score_lexicographic, leak_detection_error
 
-from wntr_exp_multi import (
+from wntr_exp_Regression import (
     WNTREnv,
     build_static_graph_from_wntr,
     build_attr_from_pressure_window
 )
 
-from GGNN_multi import GGNNModel
+from GGNN_Regression import GGNNModel
 
 
 # ============================================================
@@ -57,10 +57,10 @@ def run_single_test_episode(
     - leak_node_names
     """
 
-    env = WNTREnv(inp_path, max_steps=max_steps, num_leaks=2)
+    env = WNTREnv(inp_path, max_steps=max_steps)
     adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(env.wn)
 
-    env.reset(with_leak=True)
+    env.reset(num_leaks=2)
     sim = env.sim
 
     # ------------------------
@@ -206,10 +206,10 @@ def run_multiple_tests(
 # ============================================================
 
 if __name__ == "__main__":
-    inp_path = r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\20x20_branched.inp"
+    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
 
-    ggnn_path = r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\saved_models\ggnn_model.pt"
-    rf_path   = r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\saved_models\rf_leak_onset.pkl"
+    ggnn_path = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/ggnn_model.pt"
+    rf_path   = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/rf_leak_onset.pkl"
 
 
     model, rf = load_models(ggnn_ckpt_path=ggnn_path,rf_model_path=rf_path)

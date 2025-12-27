@@ -10,7 +10,7 @@ from main_dyn_topologyknown_01 import func_gen_B2_lu
 from topological import compute_polygon_flux, plot_leak_probability_multi, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability, build_M
 from wntr_to_pyg import build_pyg_time_series
 from topological import plot_edge_s_u, plot_edge_Uhat
-from GGNN_multi import GGNNModel, RandomForestLeakOnsetDetector
+from GGNN_Regression import GGNNModel, RandomForestLeakOnsetDetector
 
 import wntr
 from wntr.sim.interactive_network_simulator import InteractiveWNTRSimulator
@@ -124,10 +124,10 @@ def run_GGNN(inp_path):
         2) non ha topological layer
     """
 
-    num_episodes = 300
+    num_episodes = 200
     max_steps    = 50
     lr           = 1e-2
-    epochs       = 1000
+    epochs       = 500
     area = 0.1
     HIDDEN_SIZE = 132
     PROPAG_STEPS = 7
@@ -313,5 +313,5 @@ def run_GGNN(inp_path):
 
 
 if __name__ == "__main__":
-    run_GGNN(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\20x20_branched.inp")
+    run_GGNN(inp_path=r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp")
 
