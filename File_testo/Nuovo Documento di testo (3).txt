@@ -1,0 +1,27 @@
+Cosa ho fatto questa settimana:
+
+ho fatto il grafo contenente i poligoni colorati in base al flowrate dei link toccati dal poligono. visto che il range minimo - massimo cambia ogni step, ho impostato fisso il range del primo step per vedere se i colori cambiano o no.
+
+il vettore del flusso tutale è stato calcolato facendo come aveva detto tiziana la moltiplicazione di B2 trasposta e f (il vettore dei flussi per ogni edge)
+
+Il leak è stato creato con la funzione start leak di Pierluigi su un nodo mirato
+z
+ho visto che i poligoni scelti si possono controllare attraverso "selected cycles" oppure attraverso il 2 input della funzione b1b2func
+
+il flowrate negativo lo considero? o considero tutti i valori assoluti del flow?
+no, non lo considero assoluto (provare entrambi)
+
+
+Vedere Flussi e Demand, rimettere apposto (primi 2 grafici: quello che prendo il valore assoluto e anche il valore non assoluto dei singoli flussi dei link, poi altro grafico: nodi colorati come le demand.  altro grafo edge colorati come i flussi)
+
+Devo partire da una GNN di base e farla funzionare. Lo scopo della GNN non è più scegliere l'azione ma il Leak Detection.
+Graph Convolutional Network per il leak detection
+
+
+
+
+Diverse opere recenti convergono sull’utilità di separare concettualmente e algoritmicamente la leak detection dalla leak localization.
+Tyagi et al. propongono un two-stage model in cui il primo stadio è dedicato alla sola rilevazione della presenza di perdite, mentre il secondo si occupa della localizzazione spaziale, sfruttando il fatto che le due task hanno natura e segnali informativi differenti. 
+MDPI
+
+In maniera molto simile, la tesi di Niu propone un’architettura modulare in due blocchi: un MLP per la detection temporale (presenza e istante di inizio del leak) e una GGNN per la localization spaziale, sottolineando che questa separazione consente di “prima identificare se e quando si verifica una perdita usando pattern temporali, e successivamente localizzarla con alta accuratezza sfruttando la topologia della rete”.

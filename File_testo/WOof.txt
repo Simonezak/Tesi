@@ -1,0 +1,16 @@
+Partire dal GGNN di Leveraging. vedere se fa anche leak detection oppure solo localization. Vedere se se non c'è un leak lo cerca comunque oppure restituisce che non c'è un leak.
+
+Bisogna vedere se ha l'istante in cui comincia il leak. 
+
+Cosa vogliamo noi: che il modello sappia dire se c'è un leak e dove in caso
+
+Non so se la gated gnn trova se c'è o no un leak di base, in caso bisogna implementarlo
+
+
+prima di tutto facciamo funzionare per qbene questa.
+
+
+k first step you have to connect to the VPN. You should install OpenVPN and then open the attached file with OpenVPN, which will import the configuration. You connect to it, and it will ask you for your sapienza email and password. If you see no error it means you are connected to the VPN.
+
+Second step you have to connect to the server. Open VSCode, in the bottom left corner there is a button to connect to a remote host. Click it and on the menu that appears (i'm going by memory, but you can find all of these steps online) select "Add new ssh host", and then the string that prompts you have to enter: "ssh himel@10.50.150.70". 
+Now it is configured and you can connect to it. Again click on the bottom left corner and connect to host, you should find the server. The password when prompted is himelWits2025.

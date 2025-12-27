@@ -105,11 +105,6 @@ class GGNNModel(nn.Module):
         # ⭐ nuovo output continuo
         anomaly = self.linear_o(hidden_state).squeeze(-1)
 
-        # forziamo valori >= 0
-        #anomaly = F.softplus(anomaly)
-
-        #anomaly = anomaly * mask
-
         return anomaly  
      
 

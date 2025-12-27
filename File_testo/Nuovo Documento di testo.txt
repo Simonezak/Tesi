@@ -1,0 +1,28 @@
+fetch("https://www.linkedin.com/voyager/api/graphql?action=execute&queryId=voyagerIdentityDashProfileEditFormPages.93dfaba419a5c8ae9bae666d316c5af3", {
+  "headers": {
+    "accept": "application/vnd.linkedin.normalized+json+2.1",
+    "accept-language": "de-DE,de;q=0.9,it-IT;q=0.8,it;q=0.7,en-US;q=0.6,en;q=0.5",
+    "cache-control": "no-cache",
+    "content-type": "application/json; charset=UTF-8",
+    "csrf-token": "ajax:2640426779192011266",
+    "pragma": "no-cache",
+    "priority": "u=1, i",
+    "sec-ch-prefers-color-scheme": "light",
+    "sec-ch-ua": "\"Google Chrome\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "x-li-lang": "it_IT",
+    "x-li-page-instance": "urn:li:page:d_flagship3_profile_self_edit_project;urXAcbQASxq62nqDtG4fzg==",
+    "x-li-pem-metadata": "Voyager - Profile - AddEdit=project-profile-edit-form-post",
+    "x-li-track": "{\"clientVersion\":\"1.13.39797\",\"mpVersion\":\"1.13.39797\",\"osName\":\"web\",\"timezoneOffset\":2,\"timezone\":\"Europe/Rome\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1.2874999046325684,\"displayWidth\":1920.949857711792,\"displayHeight\":1080.2124199867249}",
+    "x-restli-protocol-version": "2.0.0"
+  },
+  "referrer": "https://www.linkedin.com/preload/",
+  "body": "{\"variables\":{\"formElementInputs\":[{\"formElementUrn\":\"urn:li:fsd_profileEditFormElement:(PROJECT,urn:li:fsd_profileProject:(ACoAAF7OxfUBw4d2CSfD_9J28py03XdZ-1SANoU,2006717945),/url)\",\"formElementInputValues\":[{\"textInputValue\":\"a\"}]}],\"trackingId\":\"Þ\\u0017d^ë»NÓF\\b]\\u0017¸æ\",\"initialFlowEntryPoint\":\"PROFILE_SECTION\"},\"queryId\":\"voyagerIdentityDashProfileEditFormPages.93dfaba419a5c8ae9bae666d316c5af3\"}",
+  "method": "POST",
+  "mode": "cors",
+  "credentials": "include"
+});

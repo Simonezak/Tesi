@@ -1,0 +1,59 @@
+
+per Jilin Buono
+
+    num_episodes = 100
+    max_steps    = 50
+    lr           = 1e-3
+    epochs       = 500          # numero di epoch della GGNN
+    area = 0.05                 # area dei leak
+    HIDDEN_SIZE = 106
+    PROPAG_STEPS = 6
+    WINDOW_SIZE = 4  
+
+
+Hidden_size troppo alta non va mi da tutti zeri
+anche se modifico lr troppo basso non va mi sa, ma non ne son sicuro
+
+Per grafi piccoli trova anche il multi leak
+Per grid 20x20 non trova niente ora come ora neanche single leak
+
+senza softplus ne relu, la predizione nella GGNN è migliorata
+
+20x20Grid
+
+[I 2025-12-19 13:38:30,445] Trial 12 finished with value: 1.0393619332588637 and parameters: 
+{'hidden_size': 252, 'propag_steps': 4, 'window_size': 4, 'lr': 0.011414074277004508}. Best is trial 6 with value: 1.5006520942151547.
+
+[I 2025-12-19 13:38:30,445] Trial 0 finished with value: 1.3340969607432682 and parameters: 
+{'hidden_size': 207, 'propag_steps': 4, 'window_size': 3, 'lr': 0.014980134925275095}. Best is trial 0 with value: 1.3340969607432682.
+
+[I 2025-12-19 13:53:45,921] Trial 13 finished with value: 1.0593397151126582 and parameters: 
+{'hidden_size': 211, 'propag_steps': 7, 'window_size': 2, 'lr': 0.013885791967934265}. Best is trial 6 with value: 1.5006520942151547.
+
+[I 2025-12-19 13:45:15,593] Trial 6 finished with value: 1.5006520942151547 and parameters: 
+{'hidden_size': 126, 'propag_steps': 7, 'window_size': 1, 'lr': 0.011688652995354005}. Best is trial 6 with value: 1.5006520942151547.
+
+[I 2025-12-19 13:54:41,948] Trial 14 finished with value: 1.5015534068346024 and parameters: 
+{'hidden_size': 132, 'propag_steps': 3, 'window_size': 4, 'lr': 0.004399944342614508}. Best is trial 14 with value: 1.5015534068346024.
+
+[I 2025-12-19 14:03:10,725] Trial 23 finished with value: 1.044532885307851 and parameters: 
+{'hidden_size': 194, 'propag_steps': 3, 'window_size': 3, 'lr': 0.01698260953556571}. Best is trial 14 with value: 1.5015534068346024.
+
+
+Con questi parametri 20x20_branch ha trovato sia primo che secondo
+
+    num_episodes = 200
+    max_steps    = 50
+    lr           = 1e-2
+    epochs       = 500
+    area = 0.1
+    HIDDEN_SIZE = 132
+    PROPAG_STEPS = 7
+    WINDOW_SIZE = 4 
+
+    con questi parametri, ma 10 episodi e 100 epochs:
+    Num test  : 30
+    Mean score: 1.24683092
+    Std score : 0.23026466
+    Min score : 0.50675234
+    Max score : 1.50101483

@@ -52,7 +52,7 @@ class WNTREnv:
             self.leak_node_names = np.random.choice(junctions, size=num, replace=False).tolist()
 
             # parametri leak
-            self.leak_start_step = np.random.randint(10, 26)
+            self.leak_start_step = np.random.randint(5, 26)
 
             #self.leak_node_name = "11"
             #self.sim.start_leak(self.leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
@@ -124,10 +124,10 @@ def run_GGNN(inp_path):
         2) non ha topological layer
     """
 
-    num_episodes = 200
+    num_episodes = 300
     max_steps    = 50
     lr           = 1e-2
-    epochs       = 500
+    epochs       = 1000
     area = 0.1
     HIDDEN_SIZE = 132
     PROPAG_STEPS = 7
@@ -254,7 +254,7 @@ def run_GGNN(inp_path):
     print("\n=== TRAINING GGNN ===")
 
     for epoch in range(epochs):
-        
+
         model.train()
 
         sample = np.random.choice(all_snapshots_with_leak)
@@ -263,12 +263,11 @@ def run_GGNN(inp_path):
         adj  = sample["adj"]
         y    = sample["y"]  # [N,1]
 
-        # target ora è [1,N]
+        # target [1, N]
         target = y.squeeze().float().unsqueeze(0)
 
         optimizer.zero_grad()
-        out = model(attr, adj) # output [1,N]
-
+        out = model(attr, adj)   # [1, N]
         loss = loss_fn(out, target)
         loss.backward()
         optimizer.step()
@@ -277,146 +276,33 @@ def run_GGNN(inp_path):
             print(f"Epoch {epoch} | Loss={loss.item():.8f}")
 
 
+    # ============================================================
+    #                 SAVE TRAINED MODELS
+    # ============================================================
 
-    print("\n\n=== TEST PHASE ===")
+    import os
+    import pickle
 
-    test_env = WNTREnv(inp_path, max_steps=max_steps, num_leaks=2)
-    adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(test_env.wn)
-    test_env.reset(with_leak=True)
-    sim = test_env.sim
+    os.makedirs("saved_models", exist_ok=True)
 
-    test_snapshots = []
-    test_pressure_window = []
+    # ---- salva GGNN ----
+    ggnn_path = "saved_models/ggnn_model.pt"
+    torch.save({
+        "model_state_dict": model.state_dict(),
+        "attr_size": WINDOW_SIZE,
+        "hidden_size": HIDDEN_SIZE,
+        "propag_steps": PROPAG_STEPS
+    }, ggnn_path)
 
+    print(f"\n[OK] GGNN salvato in: {ggnn_path}")
 
-    # --------------------
-    # 1) LEAK ONSET DETECTION (RandomForest)
-    # --------------------
+    # ---- salva Random Forest ----
+    rf_path = "saved_models/rf_leak_onset.pkl"
+    with open(rf_path, "wb") as f:
+        pickle.dump(rf, f)
 
-    print("\n--- Leak detection (Random Forest) ---")
+    print(f"[OK] RandomForest salvato in: {rf_path}")
 
-    onset_scores = []
-
-    for step in range(max_steps):
-
-        # attiva leak nel momento corretto
-        if step == test_env.leak_start_step:
-            for leak_node in test_env.leak_node_names:
-                test_env.sim.start_leak(leak_node, leak_area=area, leak_discharge_coefficient=0.75)
-
-        sim.step_sim()
-
-
-    results = sim.get_results()
-
-    df_pressure = results.node["pressure"]
-    df_demand   = results.node["demand"]
-    df_leak     = results.node.get("leak_demand", None)
-
-    cols = list(node2idx.keys())
-
-    for t in range(len(df_pressure)):
-
-        pressures = df_pressure.loc[:, cols].iloc[t].to_numpy(dtype=np.float32)
-        demand    = df_demand.loc[:, cols].iloc[t].to_numpy(dtype=np.float32)
-        leak = df_leak.loc[:, cols].iloc[t].to_numpy(dtype=np.float32)
-
-        # salvalo in lista
-        test_snapshots.append({
-            "pressures": pressures,
-            "demand":    demand,
-            "leak":      leak
-        })
-
-        prob = rf.predict(pressures)
-        onset_scores.append(prob)
-
-        
-    predicted_onset = int(np.argmax(onset_scores))
-    print(f"\n Inizio leak stimato allo step: {predicted_onset}")
-
-    anomaly_time_series = []
-
-    # --------------------
-    # 2) LEAK LOCALIZATION (GGNN) - PER OGNI STEP DOPO ONSET
-    # --------------------
-
-    TOTAL_STEPS = len(test_snapshots)
-
-    for snap in test_snapshots[predicted_onset:]:
-
-        current_pressures = torch.tensor(snap["pressures"], dtype=torch.float32)  # [N]
-        test_pressure_window.append(current_pressures)
-
-        if len(test_pressure_window) > WINDOW_SIZE:
-            test_pressure_window.pop(0)
-        if len(test_pressure_window) < WINDOW_SIZE:
-            continue
-
-        attr_matrix = build_attr_from_pressure_window(test_pressure_window)  # [1,N,W]
-        with torch.no_grad():
-            u_pred = model(attr_matrix, adj_matrix).view(-1)
-
-        anomaly_time_series.append(u_pred.cpu().numpy())
-        """
-        if step >= TOTAL_STEPS - 1:
-            # target
-            df_demand = results.node["demand"]
-            df_leak = results.node.get("leak_demand", None)
-
-            # Estrai demand e leak come numpy
-            demand = np.array([df_demand.loc[:, name].values[-1] for name in node2idx.keys()], dtype=np.float32)
-            leak = np.array([df_leak.loc[:, name].values[-1] for name in node2idx.keys()], dtype=np.float32) if df_leak is not None else np.zeros_like(demand)
-
-
-            # Converti in tensori PyTorch
-            demand = torch.tensor(demand, dtype=torch.float32)
-            leak = torch.tensor(leak, dtype=torch.float32)
-
-            # Calcola u_target
-            u_target = (demand + leak).view(-1)
-
-            print(f"{'Nodo':<8} {'u_pred':<12} {'demand':<12} {'leak':<12} {'u_target':<12} {'diff':<12}")
-            print("-" * 70)
-
-            for i in range(len(u_pred)):
-                node_name = idx2node[i]
-
-                p = float(u_pred[i])
-                d = float(demand[i])
-                l = float(leak[i])
-                t = float(u_target[i])
-
-                print(
-                    f"{node_name:<8} "
-                    f"{p:<12.5f} "
-                    f"{d:<12.5f} "
-                    f"{l:<12.5f} "
-                    f"{t:<12.5f} "
-                    f"{(p - t):<12.5f}"
-                )
-            
-            print("\n\n")
-            """
-
-    print("\n\n=== RANKING NODI PER ANOMALIA CUMULATA (basato su u_pred) ===")
-
-    A = np.array(anomaly_time_series)   # shape [T, N]
-    T, N = A.shape
-
-    # 🔹 somma temporale delle anomalie per nodo
-    score = A.sum(axis=0)               # [N]
-
-    # ranking decrescente
-    ranking = np.argsort(-score)
-
-    print(f"\n{'Nodo':<10} {'score (Σ u_pred)':<20}")
-    print("-" * 35)
-
-    for idx in ranking:
-        print(f"{idx2node[idx]:<10} {score[idx]:<20.8f}")
-
-    print("\nNodi leak reali:", test_env.leak_node_names)
 
 
 

@@ -1,0 +1,15 @@
+il layer viene usato per arricchire l'embedding della rappresentazione del grafo giusto?
+
+servono ancora le metriche del grafo fornite alla GNN per questa leak detection?
+Domanda sui parametri in input alla GNN  dato che le metriche dinamiche dei grafici in quel caso sono poche, va bene usare anche quelle 4 come input?
+
+layer topologico viene messo come layer aggiuntivo all'interno della gnn? 
+
+Quindi devo pensare a qualche strategia poi per scegliere i cicli più rilevanti al leak? e riguardo i cicli scelti saranno quelli lo spazio delle azioni? nel senso poi quello saranno lo spazio delle azioni e si deve scegliere tra gli archi di quei loop quale chiudere?
+
+ieri nell'audio dicevi che l'obiettivo era scegliere un insieme di questi anelli (es. attraverso un algoritmo) e vedere la percentuale di leak detection.
+Quindi l'obiettivo non è più l'acqua salvata ma se riesco a catturare il leak all'interno di questo poligono? cioè se uno dei nodi nel poligono ha un leak? o in che senso "catturare il leak"
+
+ci sono algoritmi che si basano su informazioni topologiche per la leak detection? ma come possiamo selezionare il minor numero di poligoni per avere un tot % di accuratezza nella leak detection? come variano questi poligoni in base a come cambia la rete? (es. topologia a rete, topologia a griglia, topologia ad albero, ecc)
+prendi il grafo, calcoli sti poligoni, ne scegli un tot per massimizzar l'accuracy della rete
+parte extra: quali poligoni possiamo dare al modello di RL in modo che chiuda i leak piu rapidamente? con piu accuracy e meno step?
