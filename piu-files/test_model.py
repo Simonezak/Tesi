@@ -11,6 +11,69 @@ from wntr_exp_Regression import (
 
 from GGNN_Regression import GGNNModel
 
+# ============================================================
+#                   PERFORMANCE METRICS
+# ============================================================
+
+def hit_at_k(predicted_onsets, true_onsets, k=5):
+    predicted_onsets = np.array(predicted_onsets)
+    true_onsets = np.array(true_onsets)
+    return np.mean(np.abs(predicted_onsets - true_onsets) <= k)
+
+def detection_accuracy(detected, has_leak):
+    """
+    detected: bool
+    has_leak: bool
+    """
+    return int(detected == has_leak)
+
+def top1_accuracy_multileak(score_per_node, idx2node, leak_nodes):
+    ranking = np.argsort(-score_per_node)
+    top_L = [idx2node[i] for i in ranking[:len(leak_nodes)]]
+    return int(set(top_L) == set(leak_nodes))
+
+def topk_accuracy_multileak(score_per_node, idx2node, leak_nodes, k):
+    ranking = np.argsort(-score_per_node)
+    top_k = [idx2node[i] for i in ranking[:k]]
+    return int(all(ln in top_k for ln in leak_nodes))
+
+def mean_reciprocal_rank(score_per_node, idx2node, leak_nodes):
+    ranking = np.argsort(-score_per_node)
+    ranking_nodes = [idx2node[i] for i in ranking]
+
+    rr = []
+    for ln in leak_nodes:
+        rank = ranking_nodes.index(ln) + 1
+        rr.append(1.0 / rank)
+
+    return np.mean(rr)
+
+def confidence_ratio(score_per_node, idx2node, leak_nodes, eps=1e-8):
+    leak_scores = []
+    non_leak_scores = []
+
+    for i, s in enumerate(score_per_node):
+        node = idx2node[i]
+        if node in leak_nodes:
+            leak_scores.append(s)
+        else:
+            non_leak_scores.append(s)
+
+    return (np.mean(leak_scores) + eps) / (np.mean(non_leak_scores) + eps)
+
+def confidence_gap(score_per_node, idx2node, leak_nodes):
+    leak_scores = []
+    non_leak_scores = []
+
+    for i, s in enumerate(score_per_node):
+        node = idx2node[i]
+        if node in leak_nodes:
+            leak_scores.append(s)
+        else:
+            non_leak_scores.append(s)
+
+    return np.mean(leak_scores) - np.mean(non_leak_scores)
+
 
 # ============================================================
 #                   LOAD MODELS

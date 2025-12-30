@@ -132,7 +132,7 @@ def run_GGNN(inp_path):
     HIDDEN_SIZE = 132
     PROPAG_STEPS = 7
     WINDOW_SIZE = 4 
-    
+
 
     all_snapshots_with_leak = []
     rf_training_data = []
