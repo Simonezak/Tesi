@@ -475,7 +475,7 @@ def build_M(B1, B2, alpha=0.2):
     #print(M)
 
     # Calcolo autovalore massimo
-    lam_max = np.linalg.eigvals(M).max()
+    lam_max = np.max(np.abs(np.linalg.eigvals(M)))
     M = M / lam_max
 
     # Normalizzazione

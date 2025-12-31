@@ -6,6 +6,8 @@ from typing import List, Dict, Tuple
 
 from main_dyn_topologyknown_01 import func_gen_B2_lu
 from optuna_GGNN import ranking_score_lexicographic
+from evaluation import evaluate_model_across_tests_lexicographic
+
 
 # -----------------------------
 # Simulator import
@@ -170,13 +172,19 @@ def run_single_test_episode(
 def run_multiple_tests(
     inp_path: str,
     model: torch.nn.Module,
-    num_test: int = 30,
+    num_test: int = 100,
     max_steps: int = 50,
     window_size: int = 4,
     leak_area: float = 0.1,
-    device: str = "cpu"
+    device: str = "cpu",
+    X: int = 2
 ):
-    scores = []
+    # --- per metriche lessicografiche finali
+    scores_per_test = []
+    leak_nodes_per_test = []
+
+    # --- score continuo (facoltativo, lo manteniamo)
+    localization_scores = []
 
     for i in range(num_test):
         print(f"\n=== TEST {i+1}/{num_test} ===")
@@ -190,24 +198,46 @@ def run_multiple_tests(
             device=device
         )
 
+        # ---- continuo (come prima)
         loc_score = ranking_score_lexicographic(
             score_per_node,
             idx2node,
             leak_nodes
         )
+        localization_scores.append(loc_score)
 
-        scores.append(loc_score)
+        # ---- per metriche lessicografiche dense
+        scores_per_test.append(score_per_node)
+        leak_nodes_per_test.append(leak_nodes)
 
         print(f"Leak nodes         : {leak_nodes}")
         print(f"Localization score : {loc_score:.4f}")
 
-    scores = np.array(scores)
+    localization_scores = np.array(localization_scores)
+
+    # ====================================================
+    # METRICHE FINALI LESSICOGRAFICHE (dense rank)
+    # ====================================================
+    lex_metrics = evaluate_model_across_tests_lexicographic(
+        scores_per_test=scores_per_test,
+        idx2node=idx2node,
+        leak_nodes_per_test=leak_nodes_per_test,
+        X=X
+    )
 
     print("\n================ SUMMARY ================")
-    print(f"Mean localization score : {scores.mean():.4f}")
-    print(f"Std localization score  : {scores.std():.4f}")
+    print(f"Num test               : {num_test}")
 
-    return scores
+    print("\n--- Localization (continuous score) ---")
+    print(f"Mean localization score: {localization_scores.mean():.4f}")
+    print(f"Std localization score : {localization_scores.std():.4f}")
+
+    print("\n--- Localization (lexicographic, dense rank) ---")
+    for k, v in lex_metrics.items():
+        print(f"{k:15s}: {v:.2f}%")
+
+    return localization_scores, lex_metrics
+
 
 
 # ============================================================
@@ -216,7 +246,7 @@ def run_multiple_tests(
 
 if __name__ == "__main__":
 
-    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
+    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/Jilin_copy_copy.inp"
     model_ckpt = "/home/zagaria/Tesi/Tesi/piu-files/saved_models/ggnn_cellcomplex.pt"
 
     device = "cpu"
@@ -248,9 +278,10 @@ if __name__ == "__main__":
     run_multiple_tests(
         inp_path=inp_path,
         model=model,
-        num_test=30,
+        num_test=100,
         max_steps=50,
         window_size=ckpt["window_size"],
         leak_area=0.1,
-        device=device
+        device=device,
+        X=2
     )

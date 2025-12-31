@@ -286,7 +286,7 @@ def run_GGNN(inp_path):
     os.makedirs("saved_models", exist_ok=True)
 
     # ---- salva GGNN ----
-    ggnn_path = "saved_models/ggnn_model.pt"
+    ggnn_path = "saved_models/ggnn_model_a.pt"
     torch.save({
         "model_state_dict": model.state_dict(),
         "attr_size": WINDOW_SIZE,
@@ -297,7 +297,7 @@ def run_GGNN(inp_path):
     print(f"\n[OK] GGNN salvato in: {ggnn_path}")
 
     # ---- salva Random Forest ----
-    rf_path = "saved_models/rf_leak_onset.pkl"
+    rf_path = "saved_models/rf_leak_onset_a.pkl"
     with open(rf_path, "wb") as f:
         pickle.dump(rf, f)
 

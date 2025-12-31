@@ -113,33 +113,26 @@ def dense_to_sparse_coo(mat: torch.Tensor) -> torch.Tensor:
 
 class CellComplexLayer(nn.Module):
     """
-    Propagazione node↔edge↔cell con B1/B2 (sparse).
+    Versione SEMPLIFICATA del layer topologico.
 
-    Input:
-      h: [B, N, H]
+    - Mantiene lo stesso nome e la stessa interfaccia
+    - NON fa doppia diffusione
+    - Agisce come correzione residua locale
+    - Evita oversmoothing
 
-    Internamente:
-      e  = B1^T h            [B, E, H]
-      c  = B2^T e            [B, C, H]   (se C>0)
-      e2 = B2 c              [B, E, H]
-      h_msg = B1 (e + e2)    [B, N, H]
-
-    Output:
-      h_out: [B, N, H]
+    h_out = h + alpha * topo(h)
     """
 
     def __init__(
         self,
         hidden_dim: int,
         B1: torch.Tensor,                  # sparse (N,E)
-        B2: Optional[torch.Tensor] = None,  # sparse (E,C) oppure None
-        activation: str = "relu",
-        dropout: float = 0.0,
+        B2: Optional[torch.Tensor] = None, # sparse (E,C)
+        dropout: float = 0.0
     ):
         super().__init__()
-        self.hidden_dim = hidden_dim
-        self.dropout = nn.Dropout(dropout)
 
+        # Manteniamo i buffer come prima
         self.register_buffer("B1", B1.coalesce())
         self.register_buffer("B1T", B1.transpose(0, 1).coalesce())
 
@@ -151,93 +144,47 @@ class CellComplexLayer(nn.Module):
             self.B2 = None
             self.B2T = None
 
-        # Normalizzazione tramite gradi su |B|
-        B1_abs = self.B1.abs()
-        self.register_buffer("deg_nodes", torch.clamp(torch.sparse.sum(B1_abs, dim=1).to_dense(), min=1.0))  # [N]
-        self.register_buffer("deg_edges", torch.clamp(torch.sparse.sum(B1_abs, dim=0).to_dense(), min=1.0))  # [E]
+        # Peso residuo (imparabile)
+        self.alpha = nn.Parameter(torch.tensor(0.05))
 
-        if self.has_cells:
-            B2_abs = self.B2.abs()
-            self.register_buffer("deg_cells", torch.clamp(torch.sparse.sum(B2_abs, dim=0).to_dense(), min=1.0))             # [C]
-            self.register_buffer("deg_edges_from_cells", torch.clamp(torch.sparse.sum(B2_abs, dim=1).to_dense(), min=1.0))  # [E]
-        else:
-            self.deg_cells = None
-            self.deg_edges_from_cells = None
+        # Proiezione lineare leggera (NO MLP profondo)
+        self.linear = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
-        act_map = {
-            "relu": nn.ReLU(),
-            "tanh": nn.Tanh(),
-            "gelu": nn.GELU(),
-            "elu": nn.ELU(),
-        }
-        self.act = act_map.get(activation.lower(), nn.ReLU())
-
-        self.edge_mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            self.act,
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-        self.cell_mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            self.act,
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-        self.node_mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            self.act,
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-        # Gate residuo (quanto usare il messaggio topologico)
-        self.gate = nn.Sequential(
-            nn.Linear(2 * hidden_dim, hidden_dim),
-            nn.Sigmoid()
-        )
+        self.dropout = nn.Dropout(dropout)
 
     @staticmethod
     def _spmm(A: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
-        """A sparse [m,n], X dense [n,H] -> [m,H]"""
         return torch.sparse.mm(A, X)
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
-        if h.dim() != 3:
-            raise ValueError(f"Expected h [B,N,H], got {tuple(h.shape)}")
-
+        """
+        h: [B, N, H]
+        """
         B, N, H = h.shape
         outs = []
 
         for b in range(B):
-            hb = h[b]  # [N,H]
+            hb = h[b]  # [N, H]
 
-            # Nodes -> Edges
-            e = self._spmm(self.B1T, hb)                  # [E,H]
-            e = e / self.deg_edges.unsqueeze(-1)
-            e = self.edge_mlp(self.act(e))
-            e = self.dropout(e)
+            # ---- Nodo → Arco
+            e = self._spmm(self.B1T, hb)   # [E, H]
 
-            # Edges -> Cells -> Edges (optional)
+            # ---- (Opzionale) contributo celle, MOLTO attenuato
             if self.has_cells:
-                c = self._spmm(self.B2T, e)               # [C,H]
-                c = c / self.deg_cells.unsqueeze(-1)
-                c = self.cell_mlp(self.act(c))
-                c = self.dropout(c)
+                c = self._spmm(self.B2T, e)           # [C, H]
+                e = e + 0.1 * self._spmm(self.B2, c)  # attenuazione forte
 
-                e2 = self._spmm(self.B2, c)               # [E,H]
-                e2 = e2 / self.deg_edges_from_cells.unsqueeze(-1)
-            else:
-                e2 = torch.zeros_like(e)
+            # ---- Arco → Nodo
+            topo = self._spmm(self.B1, e)  # [N, H]
 
-            # Back to nodes
-            h_msg = self._spmm(self.B1, (e + e2))          # [N,H]
-            h_msg = h_msg / self.deg_nodes.unsqueeze(-1)
-            h_msg = self.node_mlp(self.act(h_msg))
-            h_msg = self.dropout(h_msg)
+            topo = self.linear(topo)
+            topo = self.dropout(topo)
 
-            z = self.gate(torch.cat([hb, h_msg], dim=-1))
-            hb_out = (1 - z) * hb + z * (hb + h_msg)      # residual + gated
+            # ---- Residual correction
+            hb_out = hb + self.alpha * topo
             outs.append(hb_out)
 
-        return torch.stack(outs, dim=0)  # [B,N,H]
+        return torch.stack(outs, dim=0)
 
 
 # ============================================================
@@ -366,7 +313,7 @@ class TrainConfig:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Simulation
-    num_episodes: int = 100
+    num_episodes: int = 20
     max_steps: int = 50
     num_leaks: int = 2
     leak_area: float = 0.1
@@ -375,7 +322,7 @@ class TrainConfig:
     window_size: int = 4
     hidden_size: int = 132
     propag_steps: int = 7
-    topo_dropout: float = 0.24509566542543507
+    topo_dropout: float = 0.048334751752089636
 
     # Topology
     max_cycle_length: int = 5
@@ -531,6 +478,6 @@ def train(cfg: TrainConfig) -> str:
 if __name__ == "__main__":
     # Cambia qui il path al tuo .inp
     cfg = TrainConfig(
-        inp_path=r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
+        inp_path=r"/home/zagaria/Tesi/Tesi/Networks-found/Jilin_copy_copy.inp"
     )
     train(cfg)
