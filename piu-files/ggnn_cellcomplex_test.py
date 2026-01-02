@@ -174,7 +174,7 @@ def run_multiple_tests(
     model: torch.nn.Module,
     num_test: int = 100,
     max_steps: int = 50,
-    window_size: int = 4,
+    window_size: int = 1,
     leak_area: float = 0.1,
     device: str = "cpu",
     X: int = 2
@@ -246,7 +246,7 @@ def run_multiple_tests(
 
 if __name__ == "__main__":
 
-    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/Jilin_copy_copy.inp"
+    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
     model_ckpt = "/home/zagaria/Tesi/Tesi/piu-files/saved_models/ggnn_cellcomplex.pt"
 
     device = "cpu"

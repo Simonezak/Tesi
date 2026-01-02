@@ -75,13 +75,13 @@ class GGNNWithTopoMLP(nn.Module):
 # ============================================================
 
 def train():
-    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/Jilin_copy_copy.inp"
+    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
 
     # ====== IPERPARAMETRI ======
     MAX_STEPS = 50
-    WINDOW_SIZE = 4
-    EPOCHS = 400
-    LR = 1e-3
+    WINDOW_SIZE = 1
+    EPOCHS = 100
+    LR = 1e-1
     LEAK_AREA = 0.1
 
     HIDDEN_SIZE = 132
@@ -170,7 +170,7 @@ def train():
     # ====== SAVE ======
     os.makedirs("saved_models", exist_ok=True)
     torch.save(model.state_dict(), "saved_models/topo_mlp_ggnn.pt")
-    print("\n✅ Modello Topo-MLP salvato in saved_models/topo_mlp_ggnn.pt")
+    print("\n Modello Topo-MLP salvato in saved_models/topo_mlp_ggnn.pt")
 
 
 # ============================================================

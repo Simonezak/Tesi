@@ -66,8 +66,8 @@ def load_topo_model(ckpt_path, inp_path):
 
     # ====== IPERPARAMETRI (UGUALI AL TRAINING) ======
     WINDOW_SIZE = 1
-    HIDDEN_SIZE = 210
-    PROPAG_STEPS = 6
+    HIDDEN_SIZE = 132
+    PROPAG_STEPS = 7
 
     # ---- GGNN ----
     ggnn = GGNNModel(
@@ -227,7 +227,7 @@ def run_multiple_tests(
 
 if __name__ == "__main__":
 
-    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/Jilin_copy_copy.inp"
+    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
     topo_ckpt = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/topo_ggnn.pt"
 
     model = load_topo_model(

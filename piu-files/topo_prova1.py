@@ -73,11 +73,11 @@ class GGNNWithTopology(nn.Module):
 # ============================================================
 
 def train():
-    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/Jilin_copy_copy.inp"
+    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
     max_steps = 50
     window_size = 1
-    epochs = 50
-    lr = 1e-3
+    epochs = 100
+    lr = 1e-1
     area = 0.1
 
     env = WNTREnv(inp_path, max_steps=max_steps)
@@ -87,8 +87,6 @@ def train():
     # --------- TOPOLOGY ----------
     G = nx.Graph()
     A_np = adj_matrix.cpu().numpy()[0]
-    print(A_np.shape[0])
-    print(A_np.shape[1])
     for i in range(A_np.shape[0]):
         for j in range(i + 1, A_np.shape[1]):
             if A_np[i, j] > 0:
@@ -96,14 +94,13 @@ def train():
 
     B1, B2, _ = func_gen_B2_lu(G, max_cycle_length=8)
     L1 = B1.T @ B1 + B2 @ B2.T
-    print(L1.shape)
 
     topo_layer = TopologicalEdgeLayer(L1).to(DEVICE)
 
     ggnn = GGNNModel(
         attr_size=window_size,
-        hidden_size=210,
-        propag_steps=6
+        hidden_size=132,
+        propag_steps=7
     ).to(DEVICE)
 
     model = GGNNWithTopology(ggnn, topo_layer, B1).to(DEVICE)

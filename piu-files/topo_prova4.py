@@ -10,11 +10,10 @@ from wntr_exp_Regression import (
 
 from GGNN_Regression import GGNNModel
 from main_dyn_topologyknown_01 import func_gen_B2_lu
-from optuna_GGNN import ranking_score_lexicographic
+from evaluation import evaluate_model_across_tests_lexicographic
 
 
 DEVICE = "cpu"
-
 
 # ============================================================
 # TOPOLOGICAL RESIDUAL MLP LAYER
@@ -35,8 +34,8 @@ class TopoResidual(torch.nn.Module):
         )
 
     def forward(self, X):
-        topo_feat = self.L1 @ X          # [E,1]
-        return X + self.mlp(topo_feat)   # residual
+        topo_feat = self.L1 @ X
+        return X + self.mlp(topo_feat)
 
 
 # ============================================================
@@ -54,16 +53,10 @@ class GGNNWithTopoMLP(torch.nn.Module):
         self.register_buffer("B1_T", B1.t())
 
     def forward(self, attr_matrix, adj_matrix):
-        u_node = self.ggnn(attr_matrix, adj_matrix)
-        u_node = u_node.view(-1)              # [N]
-
-        edge_feat = self.B1_T @ u_node        # [E]
-        edge_feat = edge_feat.unsqueeze(-1)
-
-        edge_feat = self.topo(edge_feat)      # [E,1]
-
-        u_node = self.B1 @ edge_feat.squeeze(-1)
-        return u_node
+        u_node = self.ggnn(attr_matrix, adj_matrix).view(-1)
+        edge_feat = (self.B1_T @ u_node).unsqueeze(-1)
+        edge_feat = self.topo(edge_feat)
+        return self.B1 @ edge_feat.squeeze(-1)
 
 
 # ============================================================
@@ -71,33 +64,25 @@ class GGNNWithTopoMLP(torch.nn.Module):
 # ============================================================
 
 def load_topo_mlp_model(ckpt_path, inp_path):
-    """
-    Carica SOLO il modello Topo-MLP-GGNN.
-    Iperparametri coerenti col training.
-    """
 
-    # ===== IPERPARAMETRI (DEVONO COINCIDERE) =====
-    WINDOW_SIZE = 4
+    WINDOW_SIZE = 1
     HIDDEN_SIZE = 132
     PROPAG_STEPS = 6
     TOPO_MLP_HIDDEN = 16
 
-    # ---- GGNN ----
     ggnn = GGNNModel(
         attr_size=WINDOW_SIZE,
         hidden_size=HIDDEN_SIZE,
         propag_steps=PROPAG_STEPS
     )
 
-    # ---- Build topology ----
     env_tmp = WNTREnv(inp_path, max_steps=10)
     adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(env_tmp.wn)
 
     G = nx.Graph()
     for pipe_name in env_tmp.wn.pipe_name_list:
         pipe = env_tmp.wn.get_link(pipe_name)
-        u = pipe.start_node_name
-        v = pipe.end_node_name
+        u, v = pipe.start_node_name, pipe.end_node_name
         if u in node2idx and v in node2idx:
             G.add_edge(node2idx[u], node2idx[v])
 
@@ -105,14 +90,12 @@ def load_topo_mlp_model(ckpt_path, inp_path):
     L1 = B1.T @ B1 + B2 @ B2.T
 
     topo_layer = TopoResidual(L1, hidden=TOPO_MLP_HIDDEN)
-
     model = GGNNWithTopoMLP(ggnn, topo_layer, B1)
 
-    # ---- LOAD WEIGHTS ----
     model.load_state_dict(torch.load(ckpt_path, map_location="cpu"))
     model.eval()
 
-    print("[OK] Topo-MLP-GGNN caricato correttamente")
+    print("[OK] Topo-MLP-GGNN caricato")
 
     return model
 
@@ -134,33 +117,21 @@ def run_single_test_episode(
     env.reset(num_leaks=2)
     sim = env.sim
 
-    # ------------------------
-    # Run WNTR simulation
-    # ------------------------
     for step in range(max_steps):
         if step == env.leak_start_step:
             for ln in env.leak_node_names:
-                sim.start_leak(
-                    ln,
-                    leak_area=leak_area,
-                    leak_discharge_coefficient=0.75
-                )
+                sim.start_leak(ln, leak_area=leak_area, leak_discharge_coefficient=0.75)
         sim.step_sim()
 
     results = sim.get_results()
     df_pressure = results.node["pressure"]
     cols = list(node2idx.keys())
 
-    # ------------------------
-    # Leak localization ONLY
-    # ------------------------
     pressure_window = []
-    anomaly_time_series = []
+    anomaly_ts = []
 
     for t in range(env.leak_start_step, len(df_pressure)):
-        p = torch.tensor(
-            df_pressure.iloc[t][cols].to_numpy(dtype=np.float32)
-        )
+        p = torch.tensor(df_pressure.iloc[t][cols].to_numpy(np.float32))
         pressure_window.append(p)
 
         if len(pressure_window) < window_size:
@@ -173,58 +144,54 @@ def run_single_test_episode(
         with torch.no_grad():
             u_pred = model(attr, adj_matrix)
 
-        anomaly_time_series.append(u_pred.numpy())
+        anomaly_ts.append(u_pred.numpy())
 
-    A = np.array(anomaly_time_series)          # [T, N]
+    A = np.array(anomaly_ts)
     score_per_node = np.sum(np.abs(A), axis=0)
 
     return score_per_node, idx2node, env.leak_node_names
 
 
 # ============================================================
-# MULTIPLE TESTS
+# MULTI TEST (COME topo_prova2.py)
 # ============================================================
 
 def run_multiple_tests(
     inp_path,
     model,
-    num_test=20,
+    num_test=100,
     max_steps=50,
-    window_size=4,
-    leak_area=0.1
+    window_size=1,
+    leak_area=0.1,
+    X=2
 ):
-    scores = []
+    scores_per_test = []
+    leak_nodes_per_test = []
 
     for i in range(num_test):
         print(f"\n=== TEST {i+1}/{num_test} ===")
 
         score_per_node, idx2node, leak_nodes = run_single_test_episode(
-            inp_path,
-            model,
-            max_steps,
-            window_size,
-            leak_area
+            inp_path, model, max_steps, window_size, leak_area
         )
 
-        loc_score = ranking_score_lexicographic(
-            score_per_node,
-            idx2node,
-            leak_nodes
-        )
-
-        scores.append(loc_score)
+        scores_per_test.append(score_per_node)
+        leak_nodes_per_test.append(leak_nodes)
 
         print("Leak nodes:", leak_nodes)
-        print("Localization score:", loc_score)
 
-    scores = np.array(scores)
+    metrics = evaluate_model_across_tests_lexicographic(
+        scores_per_test=scores_per_test,
+        idx2node=idx2node,
+        leak_nodes_per_test=leak_nodes_per_test,
+        X=X
+    )
 
-    print("\n================= SUMMARY =================")
-    print(f"Num test        : {num_test}")
-    print(f"Mean score      : {scores.mean():.4f}")
-    print(f"Std score       : {scores.std():.4f}")
+    print("\n================= FINAL RESULTS =================")
+    for k, v in metrics.items():
+        print(f"{k:15s}: {v:.2f}%")
 
-    return scores
+    return metrics
 
 
 # ============================================================
@@ -233,19 +200,17 @@ def run_multiple_tests(
 
 if __name__ == "__main__":
 
-    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/Jilin_copy_copy.inp"
-    topo_mlp_ckpt = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/topo_mlp_ggnn.pt"
+    inp_path = "/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
+    topo_mlp_ckpt = "/home/zagaria/Tesi/Tesi/piu-files/saved_models/topo_mlp_ggnn.pt"
 
-    model = load_topo_mlp_model(
-        ckpt_path=topo_mlp_ckpt,
-        inp_path=inp_path
-    )
+    model = load_topo_mlp_model(topo_mlp_ckpt, inp_path)
 
     run_multiple_tests(
         inp_path=inp_path,
         model=model,
-        num_test=30,
+        num_test=100,
         max_steps=50,
-        window_size=4,
-        leak_area=0.1
+        window_size=1,
+        leak_area=0.1,
+        X=2
     )

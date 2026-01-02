@@ -173,7 +173,7 @@ def run_single_test_episode(
     pressure_window = []
     anomaly_time_series = []
 
-    for t in range(predicted_onset, len(df_pressure)):
+    for t in range(true_onset, len(df_pressure)):
         p = torch.tensor(
             df_pressure.iloc[t][cols].to_numpy(dtype=np.float32)
         )
@@ -207,7 +207,7 @@ def run_multiple_tests(
     rf,
     num_test=100,
     max_steps=50,
-    window_size=4,
+    window_size=1,
     leak_area=0.1,
     X=2
 ):
@@ -299,7 +299,7 @@ if __name__ == "__main__":
 
     inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
 
-    ggnn_path = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/ggnn_model.pt"
+    ggnn_path = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/ggnn_model_a.pt"
     rf_path   = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/rf_leak_onset_a.pkl"
 
     model, rf = load_models(
@@ -313,7 +313,7 @@ if __name__ == "__main__":
         rf=rf,
         num_test=100,
         max_steps=50,
-        window_size=4,
+        window_size=1,
         leak_area=0.1,
         X=2
     )

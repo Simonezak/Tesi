@@ -313,23 +313,23 @@ class TrainConfig:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Simulation
-    num_episodes: int = 20
+    num_episodes: int = 50
     max_steps: int = 50
     num_leaks: int = 2
     leak_area: float = 0.1
 
     # Model
-    window_size: int = 4
+    window_size: int = 1
     hidden_size: int = 132
-    propag_steps: int = 7
-    topo_dropout: float = 0.048334751752089636
+    propag_steps: int = 3
+    topo_dropout: float = 0.04890504910565102
 
     # Topology
-    max_cycle_length: int = 5
+    max_cycle_length: int = 8
 
     # Optimization
-    epochs: int = 500
-    lr: float = 1e-2
+    epochs: int = 300
+    lr: float = 1e-1
     seed: int = 42
 
     # Saving
@@ -478,6 +478,6 @@ def train(cfg: TrainConfig) -> str:
 if __name__ == "__main__":
     # Cambia qui il path al tuo .inp
     cfg = TrainConfig(
-        inp_path=r"/home/zagaria/Tesi/Tesi/Networks-found/Jilin_copy_copy.inp"
+        inp_path=r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
     )
     train(cfg)

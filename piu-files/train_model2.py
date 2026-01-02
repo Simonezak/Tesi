@@ -110,130 +110,39 @@ def build_attr_from_pressure_window(pressure_window):
     return attr_matrix
 
 
-
-
 def run_GGNN(inp_path):
     """
-    Prova del modello GGNN di Leveraging, che
-        1) usa solo la pressione dei nodi e matrice di adiacenza per predire leak
-        2) non ha topological layer
+    GGNN baseline
+    - UNICO ciclo sugli episodi
+    - stesso training di topo_prova1
+    - RF (onset) + GGNN (localizzazione)
+    - modello invariato
+    - CPU only
     """
 
-    num_episodes = 200
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+
+    num_episodes = 50        # = epoche GGNN
     max_steps    = 50
     lr           = 1e-2
-    epochs       = 500
-    area = 0.1
-    HIDDEN_SIZE = 132
+    area         = 0.1
+
+    HIDDEN_SIZE  = 132
     PROPAG_STEPS = 7
-    WINDOW_SIZE = 4 
+    WINDOW_SIZE  = 1
 
-
-    all_snapshots_with_leak = []
-    rf_training_data = []
+    # ============================================================
+    # ENV + GRAFO STATICO
+    # ============================================================
 
     env = WNTREnv(inp_path, max_steps=max_steps)
-
-    # costruisci adiacency matrix e indici UNA VOLTA all'inizio dato che non cambiano
     adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(env.wn)
-
-    # Inizia Simulazione WNTR
-    for ep in range(num_episodes):
-        print(f"\n--- Episodio {ep+1}/{num_episodes}")
-        
-        env.reset(num_leaks=2)
-        sim = env.sim
-
-        episode_feature_vectors = []
-
-        for step in range(max_steps):
-
-            if step == env.leak_start_step:
-                for leak_node in env.leak_node_names:  
-                    env.sim.start_leak(leak_node, leak_area=area, leak_discharge_coefficient=0.75)
-
-            sim.step_sim()
-
-
-            """
-            for leak_node in env.leak_node_names:
-                leak_idx = node2idx[leak_node]
-                leak_val = data.x[leak_idx, 3].item()
-
-                print(f"Step {step}: leak_demand[{leak_node}] = {leak_val:.6f}")
-            """       
-
-        results = sim.get_results()
-
-        df_pressure = results.node["pressure"]       # shape [T, N]
-        df_demand   = results.node["demand"]         # shape [T, N]
-        df_leak     = results.node.get("leak_demand", None)
-
-        # Aggiungi ogni riga del dataframe
-        cols = list(node2idx.keys())
-        episode_feature_vectors = df_pressure[cols].to_numpy(dtype=np.float32).tolist()
-
-        #if ep == 1:
-            #sim.plot_results("node", "demand")
-            #sim.plot_network_over_time("demand", "flowrate")
-            #sim.plot_network()
-
-        rf_training_data.append({
-            "feature_vector": episode_feature_vectors,
-            "leak_start": env.leak_start_step
-        })
-
-
     cols = list(node2idx.keys())
 
-    P = df_pressure[cols].to_numpy(dtype=np.float32)   # [T, N]
-    D = df_demand[cols].to_numpy(dtype=np.float32)     # [T, N]
-
-    if df_leak is None:
-        L = np.zeros_like(D)
-    else:
-        L = df_leak[cols].to_numpy(dtype=np.float32)
-
-        
-    T, N = P.shape
-
-    for t in range(WINDOW_SIZE - 1, T):
-
-        # finestra pressione [W, N]
-        window = P[t - WINDOW_SIZE + 1 : t + 1]     # [W, N]
-
-        # attr_matrix [1, N, W]
-        attr_matrix = torch.tensor(
-            window.T, dtype=torch.float32
-        ).unsqueeze(0)
-
-        # target solo dopo leak onset
-        if t < env.leak_start_step:
-            continue
-
-        u = D[t] + L[t]                              # [N]
-        y = torch.tensor(u, dtype=torch.float32).view(-1, 1)
-
-        all_snapshots_with_leak.append({
-            "attr": attr_matrix,
-            "adj":  adj_matrix,
-            "y":    y
-        })
-
-
-
-
-
     # ============================================================
-    #            TRAIN RANDOM FOREST LEAK-ONSET
-    # ============================================================
-
-    print("\n=== TRAINING RANDOM FOREST ===")
-    rf = RandomForestLeakOnsetDetector()
-    rf.fit(rf_training_data)
-
-    # ============================================================
-    #                       TRAIN GGNN
+    # MODELLI
     # ============================================================
 
     model = GGNNModel(
@@ -245,63 +154,108 @@ def run_GGNN(inp_path):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
 
+    rf = RandomForestLeakOnsetDetector()
+    rf_training_data = []
 
-    print("\n=== TRAINING GGNN ===")
+    print("\n=== TRAINING RF + GGNN (SINGLE EPISODIC LOOP) ===")
 
-    for epoch in range(epochs):
+    # ============================================================
+    # UNICO LOOP EPISODICO
+    # ============================================================
+
+    for epoch in range(num_episodes):
+
+        print(f"\n--- Episodio {epoch+1}/{num_episodes}")
 
         model.train()
+        env.reset(num_leaks=2)
+        sim = env.sim
 
-        sample = np.random.choice(all_snapshots_with_leak)
+        pressure_window = []
+        episode_pressures = []
 
-        attr = sample["attr"]
-        adj  = sample["adj"]
-        y    = sample["y"]  # [N,1]
+        for step in range(max_steps):
 
-        # target [1, N]
-        target = y.squeeze().float().unsqueeze(0)
+            # attiva leak
+            if step == env.leak_start_step:
+                for ln in env.leak_node_names:
+                    sim.start_leak(
+                        ln,
+                        leak_area=area,
+                        leak_discharge_coefficient=0.75
+                    )
 
-        optimizer.zero_grad()
-        out = model(attr, adj)   # [1, N]
-        loss = loss_fn(out, target)
-        loss.backward()
-        optimizer.step()
+            sim.step_sim()
+            results = sim.get_results()
+
+            # ------------------------
+            # PRESSIONI (per RF)
+            # ------------------------
+            p_vec = results.node["pressure"].iloc[-1][cols].to_numpy(dtype=np.float32)
+            episode_pressures.append(p_vec)
+
+            # ------------------------
+            # GGNN (solo dopo onset)
+            # ------------------------
+            p = torch.tensor(p_vec, dtype=torch.float32)
+            pressure_window.append(p)
+
+            if len(pressure_window) > WINDOW_SIZE:
+                pressure_window.pop(0)
+            if len(pressure_window) < WINDOW_SIZE:
+                continue
+            if step < env.leak_start_step:
+                continue
+
+            attr = build_attr_from_pressure_window(pressure_window)
+
+            demand = results.node["demand"].iloc[-1][cols].values
+            leak = results.node.get("leak_demand", None)
+            leak = leak.iloc[-1][cols].values if leak is not None else 0
+            target = torch.tensor(
+                demand + leak,
+                dtype=torch.float32
+            ).unsqueeze(0)
+
+            optimizer.zero_grad()
+            out = model(attr, adj_matrix)
+            loss = loss_fn(out, target)
+            loss.backward()
+            optimizer.step()
+
+        # ------------------------
+        # AGGIORNA RF (1 sample = 1 episodio)
+        # ------------------------
+        rf_training_data.append({
+            "feature_vector": episode_pressures,
+            "leak_start": env.leak_start_step
+        })
+
+        # retrain incrementale (semplice ma corretto)
+        rf.fit(rf_training_data)
 
         if epoch % 10 == 0:
-            print(f"Epoch {epoch} | Loss={loss.item():.8f}")
-
+            print(f"Epoch {epoch:04d} | RF samples: {len(rf_training_data)}")
 
     # ============================================================
-    #                 SAVE TRAINED MODELS
+    # SAVE MODELS
     # ============================================================
 
-    import os
     import pickle
-
     os.makedirs("saved_models", exist_ok=True)
 
-    # ---- salva GGNN ----
-    ggnn_path = "saved_models/ggnn_model.pt"
     torch.save({
         "model_state_dict": model.state_dict(),
         "attr_size": WINDOW_SIZE,
         "hidden_size": HIDDEN_SIZE,
         "propag_steps": PROPAG_STEPS
-    }, ggnn_path)
+    }, "saved_models/ggnn_model_a.pt")
 
-    print(f"\n[OK] GGNN salvato in: {ggnn_path}")
-
-    # ---- salva Random Forest ----
-    rf_path = "saved_models/rf_leak_onset.pkl"
-    with open(rf_path, "wb") as f:
+    with open("saved_models/rf_leak_onset_a.pkl", "wb") as f:
         pickle.dump(rf, f)
 
-    print(f"[OK] RandomForest salvato in: {rf_path}")
-
-
-
+    print("\n[OK] GGNN e RF salvati")
 
 
 if __name__ == "__main__":
     run_GGNN(inp_path=r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp")
-
