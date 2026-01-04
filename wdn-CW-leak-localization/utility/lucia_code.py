@@ -1,5 +1,28 @@
 import networkx as nx
 
+def compute_polygon_flux(f, B2, abs: bool = False):
+    """
+    Calcola il flusso netto per ciascun poligono
+    in base al vettore dei flussi (f) e alla matrice topologica B2.
+
+    f:  [Nedge x 1]  vettore dei flussi (in m³/s)
+    B2: [Nedge x Npolygons] matrice topologica (da func_gen_B2_lu)
+
+    Ritorna:
+        f_polygons: [Npolygons x 1] vettore dei flussi per poligono
+    """
+
+    if abs:
+        # Flusso "non orientato": somma dei moduli per ogni poligono
+        f = np.abs(f)
+        B2 = np.abs(B2)
+
+    # Moltiplicazione Matrici B2' * f
+    f_polygons = B2.T @ f
+
+    return f_polygons
+
+
 def find_incremental_cycle_basis(graph):
     """
     Calcola la base dei cicli in modo incrementale:

@@ -5,7 +5,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from wntr_to_pyg import build_pyg_from_wntr, compute_topological_node_features, visualize_snapshot, build_static_graph_from_wntr
+from wntr_to_pyg import compute_topological_node_features, visualize_snapshot, build_static_graph_from_wntr
 from main_dyn_topologyknown_01 import func_gen_B2_lu
 from topological import compute_polygon_flux, plot_leak_probability_multi, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability, build_M
 from topological import plot_edge_s_u, plot_edge_Uhat

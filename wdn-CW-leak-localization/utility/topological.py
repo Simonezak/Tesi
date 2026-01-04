@@ -7,6 +7,10 @@ from matplotlib import colors
 
 import numpy as np
 
+# ============================================================
+#  SCORE FUNCSSSS
+# ============================================================
+
 def dense_rank_descending(scores):
     """
     Restituisce il dense-rank (0-based) per ogni elemento.
@@ -131,6 +135,52 @@ def evaluate_model_across_tests_lexicographic(
 
     return counters 
 
+
+# ============================================================
+#  ROBA PER WNTRENV
+# ============================================================
+
+def pyg_to_ggnn_inputs(data, pressure_window):
+    """
+    Converte un PyG Data + finestra temporale delle pressioni
+    in input compatibili con il modello GGNN:
+    
+    - attr_matrix : tensor [1, N, WINDOW_SIZE]
+    - adj_matrix  : tensor [1, N, N] Ma l'adiacency matrix non cambia nel tempo vabbe
+    """
+    
+    pressures = torch.stack(pressure_window, dim=1)   # [N, WINDOW_SIZE]
+    pressures = pressures.unsqueeze(0).float()        # [1, N, WINDOW_SIZE]
+
+    # ---- Matrice di adiacenza NxN
+    N = data.num_nodes
+    adj = torch.zeros((N, N), dtype=torch.float32)
+
+    src = data.edge_index[0]
+    dst = data.edge_index[1]
+    adj[src, dst] = 1.0
+    adj[dst, src] = 1.0  # grafo non orientato
+
+    adj = adj.view(1, N, N)  # -> [1, N, N]
+
+    return pressures, adj
+
+def build_attr_from_pressure_window(pressure_window):
+    """
+    Costruisce attr_matrix a partire dalla finestra temporale
+    delle pressioni già estratte.
+
+    pressure_window: list di tensor [N]
+    Ritorna:
+        attr_matrix: [1, N, WINDOW_SIZE]
+    """
+    # stack temporale: [N, WINDOW_SIZE]
+    attr = torch.stack(pressure_window, dim=1)
+
+    # aggiungi dimensione batch
+    attr_matrix = attr.unsqueeze(0).float()  # [1, N, WINDOW_SIZE]
+
+    return attr_matrix
 
 # ============================================================
 #  DA AGGIORNARE SE DA TENERE
@@ -264,151 +314,95 @@ def visualize_snapshot(all_snapshots, episode_id, step, wn, results):
     plot_cell_complex_flux(G, coords, selected_cycles, f_polygons_abs, vmin_p, vmax_p, leak_node, episode=episode_id, step=step)
 
 
-
-def plot_node_demand(G, coords, vmin, vmax, figsize=(8,8), cmap='coolwarm', node_size=60,
-                     edge_color='k', node_edgecolor='none', annotate=True, annot_fontsize=8, episode=None,
-                     step=None, test=False):
+def build_nx_graph_from_wntr(wn, results=None, timestep_index=-1):
     """
-    Visualizza il grafo con i nodi colorati in base alla demand.
-    """
-    fig, ax = plt.subplots(figsize=figsize)
-
-    # Ottieni i valori di demand dai nodi
-    junction_nodes = [n for n in G.nodes() if G.nodes[n].get("type", "") == "Junction"]
-    demands = np.array([G.nodes[n].get('demand', "ND") if n in junction_nodes else 0.0 for n in G.nodes()])
-    norm = colors.Normalize(vmin, vmax)
-    cmap_obj = plt.get_cmap(cmap)
-
-    # Disegna archi
-    for u, v in G.edges():
-        x0, y0 = coords[u]
-        x1, y1 = coords[v]
-        ax.plot([x0, x1], [y0, y1], color=edge_color, linewidth=1, zorder=1)
-
-    # Disegna nodi colorati
-    sc = ax.scatter(coords[:, 0], coords[:, 1],
-                    s=node_size * 2,
-                    c=demands,
-                    cmap=cmap_obj,
-                    norm=norm,
-                    edgecolor=node_edgecolor,
-                    zorder=3)
-
-    # Annotazioni
-    if annotate:
-        for i, (x, y) in enumerate(coords):
-            if i in junction_nodes:
-                val = demands[i]
-                ax.text(x, y, f"{val:.3f}",
-                        color="black",
-                        fontsize=annot_fontsize,
-                        ha="center", va="center",
-                        fontweight="bold", zorder=5)
-
-
-
-
-    # Colorbar
-    sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
-    fig.colorbar(sm, ax=ax, label="Demand")
-
-    # Titolo e stile
-    ax.set_title(f"Nodes Demand - Episodio {episode}, step {step}" if step else "Nodes Demand")
-    if test:
-        ax.set_title(f"TEST WN - Nodes Demand")
-
-    ax.set_aspect("equal")
-    ax.axis("off")
-    plt.tight_layout()
-    plt.show()
-
-    return fig, ax
-
-
-
-def plot_edge_flowrate(G, coords, f, vmin, vmax,
-                       figsize=(8,8),
-                       cmap='coolwarm',
-                       node_size=40,
-                       annotate=True,
-                       annot_fontsize=8, episode=None,
-                       step=None, test=False):
-    """
-    Visualizza il grafo con gli archi colorati in base al flowrate normalizzato.
-    """
-    fig, ax = plt.subplots(figsize=figsize)
-
-    # Normalizzazione
-    norm = colors.Normalize(vmin=vmin, vmax=vmax)
-    cmap_obj = plt.get_cmap(cmap)
-    edge_colors = [cmap_obj(norm(val)) for val in f]
-
-    # Disegna grafo
-    nx.draw_networkx_edges(G, pos=dict(enumerate(coords)),
-                           edge_color=edge_colors,
-                           width=2.5,
-                           ax=ax)
+    Costruisce un grafo NetworkX con i nomi originali dei nodi WNTR.
+    Compatibile con func_gen_B2_lu (usa mappa interna).
     
-    # Disegna nodi sopra
-    nx.draw_networkx_nodes(G, pos=dict(enumerate(coords)),
-                           node_size=node_size,
-                           node_color='white',
-                           edgecolors='black',
-                           ax=ax)
+    Args:
+        wn : wntr.network.WaterNetworkModel
+        results : wntr.sim.results.SimulationResults | None
+        timestep_index : int, default=-1
 
-    # Annotazioni: valore del flowrate al centro di ciascun arco
-    if annotate:
-        for (i, (u, v)) in enumerate(G.edges()):
-            x0, y0 = coords[u]
-            x1, y1 = coords[v]
-            mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-            ax.text(mx, my, f"{float(f[i]):.3f}",
-                    fontsize=annot_fontsize,
-                    color='black',
-                    ha='center', va='center',
-                    fontweight='bold', zorder=5)
-
-    # Colorbar
-    sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
-    fig.colorbar(sm, ax=ax, label="Flowrate")
-
-    # Titolo e stile
-    ax.set_title(f"Flowrate negli archi - Episodio {episode}, step {step}" if step else "Flowrate negli archi",
-                 fontsize=11)
-    if test:
-        ax.set_title(f"TEST WN - Flowrate archi")
-    
-    
-    ax.set_aspect("equal")
-    ax.axis("off")
-    plt.tight_layout()
-    plt.show()
-
-    return fig, ax
-
-
-def compute_polygon_flux(f, B2, abs: bool = False):
-    """
-    Calcola il flusso netto per ciascun poligono
-    in base al vettore dei flussi (f) e alla matrice topologica B2.
-
-    f:  [Nedge x 1]  vettore dei flussi (in m³/s)
-    B2: [Nedge x Npolygons] matrice topologica (da func_gen_B2_lu)
-
-    Ritorna:
-        f_polygons: [Npolygons x 1] vettore dei flussi per poligono
+    Returns:
+        G : networkx.Graph
+            Grafo con i nodi come nomi originali (es. 'J1', 'R1', 'T1').
+        coords : np.ndarray
+            Array (n_nodes, 2) con le coordinate (x, y) di ciascun nodo.
     """
 
-    if abs:
-        # Flusso "non orientato": somma dei moduli per ogni poligono
-        f = np.abs(f)
-        B2 = np.abs(B2)
+    # ===============================
+    # 1️⃣ Inizializza grafo base
+    # ===============================
+    G = nx.Graph()
 
-    # Moltiplicazione Matrici B2' * f
-    f_polygons = B2.T @ f
+    # ---- Lettura dati dai risultati (se disponibili) ----
+    df_demand = getattr(results.node, "get", lambda *_: None)("demand", None) if results else None
+    df_pressure = getattr(results.node, "get", lambda *_: None)("pressure", None) if results else None
+    df_leak = getattr(results.node, "get", lambda *_: None)("leak_demand", None) if results else None
+    df_flow = getattr(results.link, "get", lambda *_: None)("flowrate", None) if results else None
 
-    return f_polygons
+    # ===============================
+    # 2️⃣ Nodi
+    # ===============================
+    for node_name, node in wn.nodes():
+        elev = float(getattr(node, "elevation", 0.0))
+        demand = float(df_demand.iloc[timestep_index][node_name]) if df_demand is not None else 0.0
+        pressure = float(df_pressure.iloc[timestep_index][node_name]) if df_pressure is not None else 0.0
+        leak_dem = float(df_leak.iloc[timestep_index][node_name]) if df_leak is not None else 0.0
 
+        G.add_node(
+            node_name,
+            pos=node.coordinates if hasattr(node, "coordinates") else (0.0, 0.0),
+            elevation=elev,
+            demand=demand,
+            pressure=pressure,
+            leak_demand=leak_dem,
+            type=node.__class__.__name__,
+        )
+
+    # ===============================
+    # 3️⃣ Archi
+    # ===============================
+    for pipe_name in wn.pipe_name_list:
+        pipe = wn.get_link(pipe_name)
+        start, end = pipe.start_node_name, pipe.end_node_name
+        if start not in G or end not in G:
+            continue
+
+        length = float(getattr(pipe, "length", 0.0))
+        diameter = float(getattr(pipe, "diameter", 0.0))
+        flow = float(df_flow.iloc[timestep_index][pipe_name]) if df_flow is not None else 0.0
+
+        G.add_edge(
+            start,
+            end,
+            pipe_name=pipe_name,
+            length=length,
+            diameter=diameter,
+            flowrate=flow
+        )
+
+    # ===============================
+    # 4️⃣ Coordinate e compatibilità con func_gen_B2_lu
+    # ===============================
+
+    # mappatura interna per i cicli topologici
+    mapping = {name: i for i, name in enumerate(G.nodes())}
+    G = nx.relabel_nodes(G, mapping, copy=True)
+
+    # coordinate in ordine numerico coerente con la mappa
+    coords = np.array([
+        wn.get_node(orig_name).coordinates if hasattr(wn.get_node(orig_name), "coordinates") else (0.0, 0.0)
+        for orig_name in wn.node_name_list if orig_name in mapping
+    ])
+
+    return G, coords
+
+
+# ========================================================================================================================
+#  SI PUò TENERE MA VA ADATTATA ALLA SOMMA DI U_K SUI NODI E DIRETTO PLOT DELLA SOMMA, NON SOLO U_hat dei singoli perche plottarne uno solo non avrebbe senso
+# ========================================================================================================================
 
 def plot_edge_Uhat(G, coords, U_hat, vmin=None, vmax=None, cmap="coolwarm", step=None):
     """
