@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 
 class GRUCell(nn.Module):
@@ -52,6 +51,7 @@ class GRUCell(nn.Module):
             
             return output   
        
+
 class GGNNModel(nn.Module):
     
     def __init__(self, attr_size, hidden_size, propag_steps):    
@@ -62,7 +62,7 @@ class GGNNModel(nn.Module):
         self.propag_steps = propag_steps            
         
         # Input: grandezza dell'attributo, output dell'input uno stato di size hidden size
-        self.linear_i = nn.Linear(attr_size,hidden_size)
+        self.linear_i = nn.Linear(attr_size, hidden_size)
 
         # 2*hidden size perche riceve in input a_in || a_out = due messaggi concatenati, ma in 
         # output deve restituire in output un output di grandezza hidden_size
@@ -72,7 +72,6 @@ class GGNNModel(nn.Module):
         self.linear_o = nn.Linear(hidden_size, 1)
         self._initialization()
 
-    # Funzione che serve ad iniziallizzare i pesi        
     def _initialization(self): 
         # Inizializza i pesi di linear_i per reti ReLU in modo ottimale
         torch.nn.init.kaiming_normal_(self.linear_i.weight)
@@ -82,28 +81,27 @@ class GGNNModel(nn.Module):
         torch.nn.init.constant_(self.linear_o.bias, 0)          
     
     def forward(self, attr_matrix, adj_matrix):
+        """
+        attr_matrix: [B, N, 1]  (pressione istantanea)
+        adj_matrix : [B, N, N]  o [N, N]
+        """
 
-        mask = (attr_matrix[:,:,0] != 0)*1
+        A_in  = adj_matrix.float()
+        A_out = adj_matrix.transpose(-2, -1).float()
 
-        A_in  = adj_matrix.float() 
-        A_out = adj_matrix.float().transpose(-2, -1)
+        # Stato iniziale dai valori di pressione
+        hidden_state = self.linear_i(attr_matrix).relu()   # [B, N, H]
 
-        if len(A_in.shape) < 3:
-            A_in  = A_in.unsqueeze(0)
-            A_out = A_out.unsqueeze(0)
-        if len(attr_matrix.shape) < 3:
-            attr_matrix = attr_matrix.unsqueeze(0)
-
-        hidden_state = self.linear_i(attr_matrix).relu()
-
+        # Message passing
         for _ in range(self.propag_steps):
             a_in  = torch.bmm(A_in,  hidden_state)
             a_out = torch.bmm(A_out, hidden_state)
-            hidden_state = self.gru(torch.cat((a_in, a_out), dim=-1),
-                                    hidden_state)
+            hidden_state = self.gru(
+                torch.cat((a_in, a_out), dim=-1),
+                hidden_state
+            )
 
-        anomaly = self.linear_o(hidden_state).squeeze(-1)
+        # Score finale per nodo
+        anomaly = self.linear_o(hidden_state).squeeze(-1).squeeze(0)  
 
         return anomaly
-
-     

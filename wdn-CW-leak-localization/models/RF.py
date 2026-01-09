@@ -1,7 +1,4 @@
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 
@@ -26,18 +23,6 @@ class RandomForestLeakOnsetDetector:
             random_state=random_state
         )
 
-    @staticmethod
-    def extract_features(snapshot):
-        """
-        snapshot = PyG Data di build_pyg_from_wntr
-        Feature ≡ pressioni nodi + flowrates archi
-        """
-        pressures = snapshot.x[:, 2].cpu().numpy()        # pressure
-        #flows     = snapshot.edge_attr[:, 2].cpu().numpy()  # flowrate
-        #vector = np.concatenate([pressures, flows])
-        return pressures
-
-
     def fit(self, snapshots):
         X, Y = [], []
 
@@ -49,7 +34,10 @@ class RandomForestLeakOnsetDetector:
 
                 # LABEL:
                 # 1 SOLO nello step in cui parte il leak
-                label = 1 if step_idx == leak_start else 0
+                if leak_start is None:
+                    label = 0   # episodio senza leak → SEMPRE 0
+                else:
+                    label = 1 if step_idx == leak_start else 0
 
                 X.append(data)
                 Y.append(label)
@@ -57,22 +45,19 @@ class RandomForestLeakOnsetDetector:
         X = np.array(X)
         Y = np.array(Y)
 
-        print("Training RandomForest per leak onset...")
+        print("\nTraining RandomForest per leak onset...")
         self.model.fit(X, Y)
         print("RandomForest addestrato.")
 
     def predict(self, snapshot):
-        if hasattr(snapshot, "cpu"):  # torch -> numpy
+        if hasattr(snapshot, "cpu"):
             snapshot = snapshot.cpu().numpy()
 
         snapshot = np.asarray(snapshot)
 
-        # Se è un vettore di pressioni [N], usalo direttamente come feature
-        # (oppure se vuoi ancora fare feature engineering, lascialo a extract_features)
         if snapshot.ndim == 1:
             x = snapshot.reshape(1, -1)
         else:
-            # se già arriva (1, N) o simile
             x = snapshot.reshape(1, -1)
 
         return self.model.predict_proba(x)[0, 1]
