@@ -1,52 +1,110 @@
-
 import torch
 import torch.nn as nn
 
-# ============================================================
-# TOPOLOGICAL RESIDUAL MLP LAYER
-# ============================================================
 
-class TopoResidual(nn.Module):
+class TopoCycleResidualNodeAlpha(nn.Module):
     """
-    x_out = x + MLP(L1 x)
+    Node-topology residual using cycle-aware edge Hodge Laplacian:
+        L1 = B1^T B1 + B2 B2^T  (in edge space)
+    and then pull back to nodes:
+        dH = B1 ( L1 ( B1^T H ) )
+
+    H_out = H + alpha * dH
+
+    Alpha is constrained to be small via:
+        alpha = alpha_max * sigmoid(alpha_raw)
+    so it cannot explode and "modify too much".
     """
-    def __init__(self, L1, hidden=16):
+    def __init__(self, B1_np, B2_np, hidden_dim, alpha_max=0.2, use_layernorm=True):
         super().__init__()
-        self.register_buffer("L1", torch.tensor(L1, dtype=torch.float32))
 
-        self.mlp = nn.Sequential(
-            nn.Linear(1, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, 1)
-        )
+        B1 = torch.tensor(B1_np, dtype=torch.float32)  # [N, E]
+        B2 = torch.tensor(B2_np, dtype=torch.float32)  # [E, F]
 
-    def forward(self, X):
-        # X: [E, 1]
-        topo_feat = self.L1 @ X          # [E, 1]
-        return X + self.mlp(topo_feat)   # residual correction
+        self.register_buffer("B1", B1)
+        self.register_buffer("B1_T", B1.t())
+
+        L1 = (B1.t() @ B1) + (B2 @ B2.t())            # [E, E]
+        self.register_buffer("L1", L1)
+
+        self.alpha_max = float(alpha_max)
+        self.alpha_raw = nn.Parameter(torch.tensor(-2.0))  # sigmoid(-2) ~ 0.12 => alpha ~ 0.024 if alpha_max=0.2
+
+        self.proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.act = nn.ReLU()
+        self.norm = nn.LayerNorm(hidden_dim) if use_layernorm else nn.Identity()
+
+        # per monitorare quanto stai modificando (utile in training)
+        self.last_delta_norm = None
+
+    def alpha(self):
+        return self.alpha_max * torch.sigmoid(self.alpha_raw)
+
+    def forward(self, H):
+        """
+        H: [B, N, Hdim]
+        """
+        # nodes -> edges
+        E_feat = torch.einsum("en,bnh->beh", self.B1_T, H)     # [B, E, H]
+
+        # cycle-aware filtering in edge space
+        E_topo = torch.einsum("ee,beh->beh", self.L1, E_feat)  # [B, E, H]
+
+        # edges -> nodes
+        dH = torch.einsum("ne,beh->bnh", self.B1, E_topo)      # [B, N, H]
+
+        dH = self.norm(self.act(self.proj(dH)))
+
+        a = self.alpha()
+        H_out = H + a * dH
+
+        # salva misura (non cambia l'interfaccia)
+        with torch.no_grad():
+            self.last_delta_norm = (a * dH).pow(2).mean().sqrt().item()
+
+        return H_out
 
 
-# ============================================================
-# GGNN + TOPO-MLP
-# ============================================================
+class GGNNWithTopoAlpha(nn.Module):
+    """
+    Wrapper GGNN che aggiunge SOLO un contesto topologico residuale sui nodi
+    (senza passare a embedding sugli archi come GGNNWithTopoMLP).
 
-class GGNNWithTopoMLP(nn.Module):
-    def __init__(self, ggnn, topo_layer, B1_np):
+    Stessa signature e output della GGNNModel.forward:
+        forward(attr_matrix, adj_matrix) -> anomaly [N]
+    """
+    def __init__(self, ggnn, topo_node_layer: TopoCycleResidualNodeAlpha):
         super().__init__()
         self.ggnn = ggnn
-        self.topo = topo_layer
-
-        B1 = torch.tensor(B1_np, dtype=torch.float32)
-        self.register_buffer("B1", B1)       # [N, E]
-        self.register_buffer("B1_T", B1.t()) # [E, N]
+        self.topo = topo_node_layer
 
     def forward(self, attr_matrix, adj_matrix):
-        u_node = self.ggnn(attr_matrix, adj_matrix)
-        edge_feat = self.B1_T @ u_node
-        edge_feat = edge_feat.unsqueeze(-1)
-        edge_feat = self.topo(edge_feat)
-        u_node = self.B1 @ edge_feat.squeeze(-1)
+        """
+        attr_matrix: [B, N, 1]
+        adj_matrix : [B, N, N] o [N, N]
+        return     : anomaly [N]
+        """
+        if adj_matrix.dim() == 2:
+            A = adj_matrix.unsqueeze(0)
+        else:
+            A = adj_matrix
 
-        return u_node
+        A_in  = A.float()
+        A_out = A.transpose(-2, -1).float()
+
+        # hidden GGNN (identico al forward originale)
+        hidden_state = self.ggnn.linear_i(attr_matrix).relu()  # [B,N,H]
+
+        for _ in range(self.ggnn.propag_steps):
+            a_in  = torch.bmm(A_in,  hidden_state)
+            a_out = torch.bmm(A_out, hidden_state)
+            hidden_state = self.ggnn.gru(torch.cat((a_in, a_out), dim=-1), hidden_state)
+
+        # --- aggiunta topologica (residuale, controllata da alpha) ---
+        hidden_state = self.topo(hidden_state)
+
+        # output come GGNN
+        anomaly = self.ggnn.linear_o(hidden_state).squeeze(-1).squeeze(0)
+        return anomaly
 
 

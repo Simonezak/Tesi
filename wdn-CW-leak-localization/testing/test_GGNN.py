@@ -18,7 +18,7 @@ def run_GGNN_test(inp_path, model, num_test=100, num_steps=50, leak_area=0.1, K=
         print(f"\n=== GGNN TEST {i+1}/{num_test} ===")
 
         #num_leaks = random.randint(1, 2)
-        num_leaks = 2
+        num_leaks = 3
 
         score_per_node, idx2node, leak_nodes = run_single_GGNN_test_episode(inp_path, model, num_steps, leak_area, num_leaks)
 
@@ -28,9 +28,26 @@ def run_GGNN_test(inp_path, model, num_test=100, num_steps=50, leak_area=0.1, K=
     # Ranking metrics
     metrics = evaluate_model_across_tests(scores_per_test, idx2node, leak_nodes_per_test, K)
 
+    K2 = 8
+
+    metrics2 = evaluate_model_across_tests(scores_per_test, idx2node, leak_nodes_per_test, K2)
+
+    K3 = 10
+
+    metrics3 = evaluate_model_across_tests(scores_per_test, idx2node, leak_nodes_per_test, K3)
+
     print("\n================= GGNN RESULTS =================")
     print(f"top{K}_all_leaks   : {metrics['topk_all_leaks']:.2f}%")
     print(f"top{K}_single_leak : {metrics['topk_single_leak']:.2f}%")
+
+    print("\n================= GGNN RESULTS =================")
+    print(f"top{K2}_all_leaks   : {metrics2['topk_all_leaks']:.2f}%")
+    print(f"top{K2}_single_leak : {metrics2['topk_single_leak']:.2f}%")
+
+    print("\n================= GGNN RESULTS =================")
+    print(f"top{K3}_all_leaks   : {metrics3['topk_all_leaks']:.2f}%")
+    print(f"top{K3}_single_leak : {metrics3['topk_single_leak']:.2f}%")
+
 
     return metrics
 
@@ -79,12 +96,12 @@ def run_single_GGNN_test_episode(inp_path, model, num_steps, leak_area, num_leak
 
 if __name__ == "__main__":
 
-    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
-    ggnn_path = r"/home/zagaria/Tesi/Tesi/wdn-CW-leak-localization/saved_models/ggnn_model.pt"
+    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/GRID.inp"
+    ggnn_path = r"/home/zagaria/Tesi/Tesi/wdn-CW-leak-localization/saved_models/ggnn_GRID.pt"
 
     NUM_TEST  = 100
     NUM_STEPS = 50
-    TOP_K     = 5
+    TOP_K     = 3
 
     model = load_GGNN(ggnn_path)
 

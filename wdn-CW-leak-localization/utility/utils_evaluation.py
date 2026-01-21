@@ -2,13 +2,14 @@ import pickle
 import torch
 from core.WNTREnv_setup import WNTREnv, build_adj_matrix
 from models.GGNN import GGNNModel
-from models.CW_GGNN import TopoResidual, GGNNWithTopoMLP
+#from models.CW_GGNN import TopoResidual, GGNNWithTopoMLP
 from utility.utils_cellcomplex import func_gen_B2_lu
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 from matplotlib import colors
+
 
 # ============================================================
 #  LOAD FUNCSSSS
@@ -55,19 +56,34 @@ def load_CWGGNN(ckpt_path, inp_path):
 
     env_tmp = WNTREnv(inp_path, num_steps=10)
     
-    adj_matrix, _, _ = build_adj_matrix(env_tmp.wn)
+    adj_matrix, node2idx, idx2node = build_adj_matrix(env_tmp.wn)
 
-    # a partire dalla matrice di adiacenza creiamo un grafo indiretto 
-    # per far funzionare la funzione di lucia per il calcolo di B1 e B2
-    A = adj_matrix.squeeze(0).cpu().numpy()
-    G = nx.from_numpy_array(A)  
+    G = nx.Graph()
+    for pipe_name in env_tmp.wn.pipe_name_list:
+        pipe = env_tmp.wn.get_link(pipe_name)
+        u, v = pipe.start_node_name, pipe.end_node_name
+        if u in node2idx and v in node2idx:
+            G.add_edge(node2idx[u], node2idx[v])
 
-    B1, B2, _ = func_gen_B2_lu(G, max_cycle_length)
+    B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length)
     L1 = B1.T @ B1 + B2 @ B2.T
 
+    from models.CW_GGNN import TopoCycleResidualNodeAlpha, GGNNWithTopoAlpha
+
+    topo_node = TopoCycleResidualNodeAlpha(
+        B1_np=B1,
+        B2_np=B2,
+        hidden_dim=hidden_size,
+        alpha_max=0.1,        # prova 0.05 / 0.1 / 0.2
+        use_layernorm=True
+    )
+
+    model = GGNNWithTopoAlpha(ggnn, topo_node)
+
+    """
     topo_layer = TopoResidual(L1, topo_mlp_hidden)
     model = GGNNWithTopoMLP(ggnn, topo_layer, B1)
-
+    """
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
@@ -89,6 +105,7 @@ def calculate_leak_ranking(score_per_node, idx2node, leak_nodes):
 
     # dense-rank discendente
     unique_scores = np.unique(scores)[::-1]
+
     score_to_rank = {s: i for i, s in enumerate(unique_scores)}
     ranks = np.array([score_to_rank[s] for s in scores])
 
@@ -110,6 +127,8 @@ def evaluate_single_test_topk(score_per_node,idx2node, leak_nodes, k):
     """
 
     pos = calculate_leak_ranking(score_per_node, idx2node, leak_nodes)
+
+    #print(pos)
 
     # Questa metrica vale True solo se tutti i leak sono all'interno dei primi k nel ranking
     topk_all_leaks = max(pos) < k

@@ -7,7 +7,7 @@ import random
 from models.GGNN import GGNNModel
 from core.WNTREnv_setup import WNTREnv, build_adj_matrix
 from utility.utils_cellcomplex import func_gen_B2_lu
-from models.CW_GGNN import TopoResidual, GGNNWithTopoMLP
+
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -42,8 +42,18 @@ def train_CWGGNN(inp_path, EPOCHS=100, num_steps=50, LR=1e-1, LEAK_AREA=0.1, HID
         propag_steps=PROPAG_STEPS
     ).to(DEVICE)
 
-    topo_layer = TopoResidual(L1, hidden=TOPO_MLP_HIDDEN).to(DEVICE)
-    model = GGNNWithTopoMLP(ggnn, topo_layer, B1).to(DEVICE)
+    from models.CW_GGNN import TopoCycleResidualNodeAlpha, GGNNWithTopoAlpha
+
+    topo_node = TopoCycleResidualNodeAlpha(
+        B1_np=B1,
+        B2_np=B2,
+        hidden_dim=HIDDEN_SIZE,
+        alpha_max=0.1,        # prova 0.05 / 0.1 / 0.2
+        use_layernorm=True
+    ).to(DEVICE)
+
+    model = GGNNWithTopoAlpha(ggnn, topo_node).to(DEVICE)
+
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     loss_fn = nn.MSELoss()
@@ -55,9 +65,12 @@ def train_CWGGNN(inp_path, EPOCHS=100, num_steps=50, LR=1e-1, LEAK_AREA=0.1, HID
 
         print(f"\n--- Episodio {epoch+1}/{EPOCHS}")
         
-        num_leaks = random.randint(1, 3)
+        num_leaks = random.randint(2, 3)
+        #num_leaks = 2
         env.reset(num_leaks)
         sim = env.sim
+
+        env.leak_start_step = 20
 
         for step in range(num_steps):
 
@@ -88,10 +101,7 @@ def train_CWGGNN(inp_path, EPOCHS=100, num_steps=50, LR=1e-1, LEAK_AREA=0.1, HID
             demand = df_demand.iloc[t][cols].values
             leak = df_leak.iloc[t][cols].values
 
-            target = torch.tensor(
-                demand + leak,
-                dtype=torch.float32
-            ).to(DEVICE)
+            target = torch.tensor(demand + leak,dtype=torch.float32).to(DEVICE)
 
             # ---------- OPTIM ----------
             optimizer.zero_grad()
@@ -100,8 +110,7 @@ def train_CWGGNN(inp_path, EPOCHS=100, num_steps=50, LR=1e-1, LEAK_AREA=0.1, HID
             loss.backward()
             optimizer.step()
 
-        if epoch % 20 == 0:
-            print(f"Epoch {epoch:04d} | Loss = {loss.item():.6f}")
+            print(f"Loss = {loss.item():.6f}")
 
     # ====== SAVE TRAINED MODEL ======
 
@@ -114,9 +123,7 @@ def train_CWGGNN(inp_path, EPOCHS=100, num_steps=50, LR=1e-1, LEAK_AREA=0.1, HID
         "propag_steps": PROPAG_STEPS,
         "topo_mlp_hidden": TOPO_MLP_HIDDEN,
         "max_cycle_length": MAX_CYCLE_LENGTH,
-    }, "saved_models/cw_ggnn.pt")
-
-    print("\n[OK] CW-GGNN salvata in saved_models/cw_ggnn.pt")
+    }, "saved_models/cw_ggnn_Modena.pt") 
 
 
 # ============================================================
@@ -125,18 +132,18 @@ def train_CWGGNN(inp_path, EPOCHS=100, num_steps=50, LR=1e-1, LEAK_AREA=0.1, HID
 
 if __name__ == "__main__":
 
-    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
+    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found-final/modena_BSD.inp"
 
     # ====== IPERPARAMETRI ======
     NUM_STEPS = 50
-    EPOCHS = 100
-    LR = 1e-1
+    EPOCHS = 50
+    LR = 2e-1
     LEAK_AREA = 0.1
 
     HIDDEN_SIZE = 132
     PROPAG_STEPS = 6
-    TOPO_MLP_HIDDEN = 16
+    TOPO_MLP_HIDDEN = 32
     MAX_CYCLE_LENGTH = 8
 
 
-    train_CWGGNN(inp_path, EPOCHS, NUM_STEPS, LR, LEAK_AREA, HIDDEN_SIZE, PROPAG_STEPS, TOPO_MLP_HIDDEN, MAX_CYCLE_LENGTH)
+    train_CWGGNN(inp_path=inp_path, EPOCHS=EPOCHS, num_steps=NUM_STEPS, LR=LR, LEAK_AREA=LEAK_AREA, HIDDEN_SIZE=HIDDEN_SIZE, PROPAG_STEPS=PROPAG_STEPS, TOPO_MLP_HIDDEN=TOPO_MLP_HIDDEN, MAX_CYCLE_LENGTH=MAX_CYCLE_LENGTH)

@@ -174,13 +174,13 @@ if __name__ == "__main__":
 
     inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
 
-    cwggnn_path = r"/home/zagaria/Tesi/Tesi/wdn-CW-leak-localization/saved_models/cw_ggnn.pt"
+    cwggnn_path = r"/home/zagaria/Tesi/Tesi/wdn-CW-leak-localization/saved_models/cw_ggnn_GOLD.pt"
     rf_path     = r"/home/zagaria/Tesi/Tesi/wdn-CW-leak-localization/saved_models/rf_leak_onset.pkl"
 
-    NUM_TEST  = 100
+    NUM_TEST  = 1000
     NUM_STEPS = 50
     THRESHOLD = 0.15
-    TOP_K     = 5
+    TOP_K     = 8
 
     rf = load_RF(rf_path)
     cwggnn = load_CWGGNN(cwggnn_path, inp_path)

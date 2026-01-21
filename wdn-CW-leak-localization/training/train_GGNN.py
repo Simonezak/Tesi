@@ -34,8 +34,8 @@ def train_GGNN(inp_path, EPOCHS = 50, num_steps = 50, LR = 1e-2, LEAK_AREA = 0.1
 
         print(f"\n--- Episodio {epoch+1}/{EPOCHS}")
         
-        #num_leaks = random.randint(1, 2)
-        num_leaks = 2
+        num_leaks = random.randint(2, 3)
+        #num_leaks = 2
         env.reset(num_leaks)
         sim = env.sim
 
@@ -80,8 +80,8 @@ def train_GGNN(inp_path, EPOCHS = 50, num_steps = 50, LR = 1e-2, LEAK_AREA = 0.1
             loss.backward()
             optimizer.step()
 
-        if epoch % 20 == 0:
-            print(f"Epoch {epoch:04d} | Loss = {loss.item():.6f}")
+
+        print(f"Epoch {epoch:04d} | Loss = {loss.item():.6f}")
 
     # ====== SAVE TRAINED MODEL ======
 
@@ -100,10 +100,10 @@ def train_GGNN(inp_path, EPOCHS = 50, num_steps = 50, LR = 1e-2, LEAK_AREA = 0.1
 
 if __name__ == "__main__":
 
-    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
+    inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/GRID.inp"
 
     # IPERPARAMETRI
-    EPOCHS = 50
+    EPOCHS = 100
     num_steps = 50
     LR = 1e-2
     LEAK_AREA = 0.1
