@@ -17,8 +17,8 @@ if __name__ == "__main__":
     NUM_STEPS = 50
     EPOCHS = 150
     
-    LR = 1e-2
-    LEAK_AREA = 0.01
+    LR = 2e-2
+    LEAK_AREA = 0.1
 
     HIDDEN_SIZE = 132
     PROPAG_STEPS = 6

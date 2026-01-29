@@ -2,7 +2,7 @@ import pickle
 import torch
 from core.WNTREnv_setup import WNTREnv, build_adj_matrix
 from models.GGNN import GGNNModel
-#from models.CW_GGNN import TopoResidual, GGNNWithTopoMLP
+from models.CW_GGNN import TopoCycleResidualNodeAlpha, GGNNWithTopoAlpha
 from utility.utils_cellcomplex import func_gen_B2_lu
 
 import matplotlib.pyplot as plt
@@ -10,6 +10,7 @@ import networkx as nx
 import numpy as np
 from matplotlib import colors
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ============================================================
 #  LOAD FUNCSSSS
@@ -26,7 +27,7 @@ def load_GGNN(ckpt_path):
     ckpt = torch.load(ckpt_path, map_location="cpu")
 
     model = GGNNModel(
-        attr_size=1,
+        attr_size=ckpt["attr_size"],
         hidden_size=ckpt["hidden_size"],
         propag_steps=ckpt["propag_steps"]
     )
@@ -43,20 +44,19 @@ def load_CWGGNN(ckpt_path, inp_path):
 
     ckpt = torch.load(ckpt_path, map_location="cpu")
 
+    attr_size = ckpt["attr_size"]
     hidden_size = ckpt["hidden_size"]
     propag_steps = ckpt["propag_steps"]
-    topo_mlp_hidden = ckpt["topo_mlp_hidden"]
     max_cycle_length = ckpt["max_cycle_length"]
 
     ggnn = GGNNModel(
-        attr_size=1,
+        attr_size=attr_size,
         hidden_size=hidden_size,
         propag_steps=propag_steps
     )
 
     env_tmp = WNTREnv(inp_path, num_steps=10)
-    
-    adj_matrix, node2idx, idx2node = build_adj_matrix(env_tmp.wn)
+    adj_matrix, node2idx, _ = build_adj_matrix(env_tmp.wn)
 
     G = nx.Graph()
     for pipe_name in env_tmp.wn.pipe_name_list:
@@ -65,25 +65,19 @@ def load_CWGGNN(ckpt_path, inp_path):
         if u in node2idx and v in node2idx:
             G.add_edge(node2idx[u], node2idx[v])
 
-    B1, B2, selected_cycles = func_gen_B2_lu(G, max_cycle_length)
-    L1 = B1.T @ B1 + B2 @ B2.T
+    B1, B2, _ = func_gen_B2_lu(G, max_cycle_length)
 
-    from models.CW_GGNN import TopoCycleResidualNodeAlpha, GGNNWithTopoAlpha
+    B1 = torch.tensor(B1, dtype=torch.float32, device=DEVICE)
+    B2 = torch.tensor(B2, dtype=torch.float32, device=DEVICE)
 
     topo_node = TopoCycleResidualNodeAlpha(
         B1_np=B1,
         B2_np=B2,
         hidden_dim=hidden_size,
-        alpha_max=0.1,        # prova 0.05 / 0.1 / 0.2
-        use_layernorm=True
-    )
+        alpha_max=0.1        # prova 0.05 / 0.1 / 0.2
+    ).to(DEVICE)
 
-    model = GGNNWithTopoAlpha(ggnn, topo_node)
-
-    """
-    topo_layer = TopoResidual(L1, topo_mlp_hidden)
-    model = GGNNWithTopoMLP(ggnn, topo_layer, B1)
-    """
+    model = GGNNWithTopoAlpha(ggnn, topo_node).to(DEVICE)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 

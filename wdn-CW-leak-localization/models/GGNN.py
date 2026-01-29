@@ -18,14 +18,17 @@ class GRUCell(nn.Module):
         
     def _initialization(self):   
         # Qui vengono iniziallizzati pesi e bias     
-        a = -np.sqrt(1/self.hidden_size)
-        b = np.sqrt(1/self.hidden_size)        
+        a = -np.sqrt(1 / self.hidden_size)
+        b = np.sqrt(1 / self.hidden_size)
+
         torch.nn.init.uniform_(self.linear_z.weight, a, b)
-        torch.nn.init.uniform_(self.linear_z.bias, a, b)        
+        torch.nn.init.uniform_(self.linear_z.bias, a, b)
+
         torch.nn.init.uniform_(self.linear_r.weight, a, b)
-        torch.nn.init.uniform_(self.linear_r.bias, a, b)        
+        torch.nn.init.uniform_(self.linear_r.bias, a, b)
+
         torch.nn.init.uniform_(self.linear.weight, a, b)
-        torch.nn.init.uniform_(self.linear.bias, a, b)                
+        torch.nn.init.uniform_(self.linear.bias, a, b)               
 
     def forward(self, input_, hidden_state):  
         
@@ -66,10 +69,11 @@ class GGNNModel(nn.Module):
 
         # 2*hidden size perche riceve in input a_in || a_out = due messaggi concatenati, ma in 
         # output deve restituire in output un output di grandezza hidden_size
-        self.gru = GRUCell(2*hidden_size, hidden_size)  
+        self.gru = GRUCell(2 * hidden_size, hidden_size)  
 
         # output: un solo numero per nodo
         self.linear_o = nn.Linear(hidden_size, 1)
+
         self._initialization()
 
     def _initialization(self): 
@@ -85,6 +89,11 @@ class GGNNModel(nn.Module):
         attr_matrix: [B, N, 1]  (pressione istantanea)
         adj_matrix : [B, N, N]  o [N, N]
         """
+        if attr_matrix.dim() == 2:  # [N,F]
+            attr_matrix = attr_matrix.unsqueeze(0)  # [1,N,F]
+
+        if adj_matrix.dim() == 2:  # [N,N]
+            adj_matrix = adj_matrix.unsqueeze(0)  # [1,N,N]
 
         A_in  = adj_matrix.float()
         A_out = adj_matrix.transpose(-2, -1).float()
@@ -96,12 +105,16 @@ class GGNNModel(nn.Module):
         for _ in range(self.propag_steps):
             a_in  = torch.bmm(A_in,  hidden_state)
             a_out = torch.bmm(A_out, hidden_state)
+
             hidden_state = self.gru(
                 torch.cat((a_in, a_out), dim=-1),
                 hidden_state
             )
 
         # Score finale per nodo
-        anomaly = self.linear_o(hidden_state).squeeze(-1).squeeze(0)  
+        anomaly = self.linear_o(hidden_state).squeeze(-1)
+
+        if anomaly.size(0) == 1:
+            return anomaly.squeeze(0)
 
         return anomaly
