@@ -3,13 +3,80 @@ import pickle
 import numpy as np
 from optuna_GGNN import ranking_score_lexicographic, leak_detection_error
 
-from wntr_exp_multi import (
+from wntr_exp_Regression import (
     WNTREnv,
     build_static_graph_from_wntr,
     build_attr_from_pressure_window
 )
+from evaluation import (
+    evaluate_model_across_tests_lexicographic
+)
 
-from GGNN_multi import GGNNModel
+
+from GGNN_Regression import GGNNModel
+
+# ============================================================
+#                   PERFORMANCE METRICS
+# ============================================================
+
+def hit_at_k(predicted_onsets, true_onsets, k=5):
+    predicted_onsets = np.array(predicted_onsets)
+    true_onsets = np.array(true_onsets)
+    return np.mean(np.abs(predicted_onsets - true_onsets) <= k)
+
+def detection_accuracy(detected, has_leak):
+    """
+    detected: bool
+    has_leak: bool
+    """
+    return int(detected == has_leak)
+
+def top1_accuracy_multileak(score_per_node, idx2node, leak_nodes):
+    ranking = np.argsort(-score_per_node)
+    top_L = [idx2node[i] for i in ranking[:len(leak_nodes)]]
+    return int(set(top_L) == set(leak_nodes))
+
+def topk_accuracy_multileak(score_per_node, idx2node, leak_nodes, k):
+    ranking = np.argsort(-score_per_node)
+    top_k = [idx2node[i] for i in ranking[:k]]
+    return int(all(ln in top_k for ln in leak_nodes))
+
+def mean_reciprocal_rank(score_per_node, idx2node, leak_nodes):
+    ranking = np.argsort(-score_per_node)
+    ranking_nodes = [idx2node[i] for i in ranking]
+
+    rr = []
+    for ln in leak_nodes:
+        rank = ranking_nodes.index(ln) + 1
+        rr.append(1.0 / rank)
+
+    return np.mean(rr)
+
+def confidence_ratio(score_per_node, idx2node, leak_nodes, eps=1e-8):
+    leak_scores = []
+    non_leak_scores = []
+
+    for i, s in enumerate(score_per_node):
+        node = idx2node[i]
+        if node in leak_nodes:
+            leak_scores.append(s)
+        else:
+            non_leak_scores.append(s)
+
+    return (np.mean(leak_scores) + eps) / (np.mean(non_leak_scores) + eps)
+
+def confidence_gap(score_per_node, idx2node, leak_nodes):
+    leak_scores = []
+    non_leak_scores = []
+
+    for i, s in enumerate(score_per_node):
+        node = idx2node[i]
+        if node in leak_nodes:
+            leak_scores.append(s)
+        else:
+            non_leak_scores.append(s)
+
+    return np.mean(leak_scores) - np.mean(non_leak_scores)
 
 
 # ============================================================
@@ -57,10 +124,10 @@ def run_single_test_episode(
     - leak_node_names
     """
 
-    env = WNTREnv(inp_path, max_steps=max_steps, num_leaks=2)
+    env = WNTREnv(inp_path, max_steps=max_steps)
     adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(env.wn)
 
-    env.reset(with_leak=True)
+    env.reset(num_leaks=2)
     sim = env.sim
 
     # ------------------------
@@ -106,7 +173,7 @@ def run_single_test_episode(
     pressure_window = []
     anomaly_time_series = []
 
-    for t in range(predicted_onset, len(df_pressure)):
+    for t in range(true_onset, len(df_pressure)):
         p = torch.tensor(
             df_pressure.iloc[t][cols].to_numpy(dtype=np.float32)
         )
@@ -138,16 +205,17 @@ def run_multiple_tests(
     inp_path,
     model,
     rf,
-    num_test=20,
+    num_test=100,
     max_steps=50,
-    window_size=4,
-    leak_area=0.1
+    window_size=1,
+    leak_area=0.1,
+    X=2
 ):
-    """
-    Esegue più test indipendenti e calcola lo score
-    con ranking_score_lexicographic.
-    """
+    # ---- per metriche finali lessicografiche
+    scores_per_test = []
+    leak_nodes_per_test = []
 
+    # ---- metriche già esistenti
     localization_scores = []
     detection_errors = []
 
@@ -163,6 +231,9 @@ def run_multiple_tests(
             leak_area=leak_area
         )
 
+        # ------------------------
+        # metriche CONTINUE
+        # ------------------------
         loc_score = ranking_score_lexicographic(
             score_per_node,
             idx2node,
@@ -172,29 +243,48 @@ def run_multiple_tests(
         localization_scores.append(loc_score)
         detection_errors.append(det_error)
 
-        print(f"Leak nodes          : {leak_nodes}")
-        print(f"Localization score  : {loc_score:.4f}")
-        print(f"Detection error: {det_error}")
+        # ------------------------
+        # metriche LESSICOGRAFICHE (dense rank)
+        # ------------------------
+        scores_per_test.append(score_per_node)
+        leak_nodes_per_test.append(leak_nodes)
 
+        print(f"Leak nodes         : {leak_nodes}")
+        print(f"Localization score : {loc_score:.4f}")
+        print(f"Detection error    : {det_error}")
+
+    # ====================================================
+    # METRICHE FINALI
+    # ====================================================
 
     localization_scores = np.array(localization_scores)
     detection_errors = np.array(detection_errors)
 
-    print("\n================= SUMMARY =================")
-    print(f"Num test                 : {num_test}")
+    lex_metrics = evaluate_model_across_tests_lexicographic(
+        scores_per_test=scores_per_test,
+        idx2node=idx2node,
+        leak_nodes_per_test=leak_nodes_per_test,
+        X=X
+    )
 
-    print("\n--- Localization ---")
-    print(f"Mean score               : {localization_scores.mean():.4f}")
-    print(f"Std score                : {localization_scores.std():.4f}")
+    print("\n================= SUMMARY =================")
+    print(f"Num test : {num_test}")
+
+    print("\n--- Localization (continuous score) ---")
+    print(f"Mean score             : {localization_scores.mean():.4f}")
+    print(f"Std score              : {localization_scores.std():.4f}")
 
     print("\n--- Detection (RF) ---")
-    print(f"Mean detection error     : {detection_errors.mean():.2f}")
-    print(f"Mean |detection error|   : {np.mean(np.abs(detection_errors)):.2f}")
-    print(f"Min detection error      : {detection_errors.min()}")
-    print(f"Max detection error      : {detection_errors.max()}")
+    print(f"Mean detection error   : {detection_errors.mean():.2f}")
+    print(f"Mean |detection error| : {np.mean(np.abs(detection_errors)):.2f}")
+    print(f"Min detection error    : {detection_errors.min()}")
+    print(f"Max detection error    : {detection_errors.max()}")
 
+    print("\n--- Localization (lexicographic, dense rank) ---")
+    for k, v in lex_metrics.items():
+        print(f"{k:15s}: {v:.2f}%")
 
-    return localization_scores, detection_errors
+    return localization_scores, detection_errors, lex_metrics
 
 
 
@@ -206,20 +296,25 @@ def run_multiple_tests(
 # ============================================================
 
 if __name__ == "__main__":
+
     inp_path = r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp"
 
-    ggnn_path = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/ggnn_model.pt"
-    rf_path   = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/rf_leak_onset.pkl"
+    ggnn_path = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/ggnn_model_a.pt"
+    rf_path   = r"/home/zagaria/Tesi/Tesi/piu-files/saved_models/rf_leak_onset_a.pkl"
 
-
-    model, rf = load_models(ggnn_ckpt_path=ggnn_path,rf_model_path=rf_path)
+    model, rf = load_models(
+        ggnn_ckpt_path=ggnn_path,
+        rf_model_path=rf_path
+    )
 
     run_multiple_tests(
         inp_path=inp_path,
         model=model,
         rf=rf,
-        num_test=30,
+        num_test=100,
         max_steps=50,
-        window_size=4,
-        leak_area=0.1
+        window_size=1,
+        leak_area=0.1,
+        X=2
     )
+

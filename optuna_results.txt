@@ -1,6 +1,0 @@
-Best score: 1.5015534068346024
-Best params:
-hidden_size: 132
-propag_steps: 3
-window_size: 4
-lr: 0.004399944342614508

@@ -58,6 +58,7 @@ Con questi parametri 20x20_branch ha trovato sia primo che secondo
     Min score : 0.50675234
     Max score : 1.50101483
 
+Sembra che se traini troppo overfitta e trova malissimo i risultati, tipo 1000 sembra troppo, 500 è ok
 
 Optuna RF:
 
@@ -90,3 +91,18 @@ Best is trial 34 with value: 8.1.
 
 Trial 46 finished with value: 5.15 and parameters: {'n_trees': 283, 'max_depth': 23, 'min_samples_split': 4, 'min_samples_leaf': 7}. 
 Best is trial 46 with value: 5.15.
+
+TOPO
+
+Trial 6 finished with value: 1.1350841097301907 and parameters: {'topo_dropout': 0.04890504910565102, 'max_cycle_length': 8}.
+Best is trial 6 with value: 1.1350841097301907.
+
+Trial 12 finished with value: 1.2092839205265045 and parameters: {'topo_dropout': 0.07266650233847667, 'max_cycle_length': 4}. 
+Best is trial 12 with value: 1.2092839205265045.
+
+Trial 21 finished with value: 1.3614227803548176 and parameters: {'topo_dropout': 0.048334751752089636, 'max_cycle_length': 5}. 
+Best is trial 21 with value: 1.3614227803548176.
+
+
+Trial 4 finished with value: 1.0263885162641282 and parameters: {'hidden_size': 213, 'propag_steps': 5, 'lr': 0.0020560773667183895, 'alpha': 0.3274797880556618}. 
+Best is trial 4 with value: 1.0263885162641282.

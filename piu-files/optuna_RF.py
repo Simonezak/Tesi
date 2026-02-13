@@ -2,8 +2,8 @@ import optuna
 import numpy as np
 import pickle
 
-from wntr_exp_multi import WNTREnv
-from GGNN_multi import RandomForestLeakOnsetDetector
+from wntr_exp_Regression import WNTREnv
+from GGNN_Regression import RandomForestLeakOnsetDetector
 from optuna_GGNN import leak_detection_error
 
 def estimate_onset_from_scores(

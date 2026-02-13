@@ -10,60 +10,55 @@ from main_dyn_topologyknown_01 import func_gen_B2_lu
 from topological import compute_polygon_flux, plot_leak_probability_multi, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability, build_M
 from wntr_to_pyg import build_pyg_time_series
 from topological import plot_edge_s_u, plot_edge_Uhat
-from GGNN_multi import GGNNModel, RandomForestLeakOnsetDetector
+from GGNN_Regression import GGNNModel, RandomForestLeakOnsetDetector
 
 import wntr
 from wntr.sim.interactive_network_simulator import InteractiveWNTRSimulator
 
 
 class WNTREnv:
-    def __init__(self, inp_path, max_steps=5, hydraulic_timestep=3600, num_leaks=2):
+    def __init__(self, inp_path, max_steps=5, hydraulic_timestep=3600):
         self.inp_path = inp_path
         self.max_steps = max_steps
         self.hydraulic_timestep = hydraulic_timestep
-        self.num_leaks = num_leaks 
         self.sim = None
         self.wn = wntr.network.WaterNetworkModel(self.inp_path)
         self.results = None
 
         
 
-    def reset(self, with_leak=True):
+    def reset(self, num_leaks=2):
 
 
         # Crea rete
         self.wn = wntr.network.WaterNetworkModel(self.inp_path)
         self.sim = InteractiveWNTRSimulator(self.wn)
 
- 
+
         # Aggiungi un leak
         self.leak_node_names = []
-
-        if with_leak:
+        self.leak_start_step = None
             
-            # Prendiamo solo le junctions visto che vogliamo che il leak sia in un nodo
+        if num_leaks > 0:
+            # Prendiamo solo le junctions
             junctions = [
                 name for name, node in self.wn.nodes()
                 if isinstance(node, wntr.network.elements.Junction)
             ]
-            #self.leak_node_name = np.random.choice(junctions)
-            
-            num = min(self.num_leaks, len(junctions))
-            self.leak_node_names = np.random.choice(junctions, size=num, replace=False).tolist()
 
-            # parametri leak
-            self.leak_start_step = np.random.randint(5, 26)
+            num = min(num_leaks, len(junctions))
+            self.leak_node_names = np.random.choice(
+                junctions, size=num, replace=False
+            ).tolist()
 
-            #self.leak_node_name = "11"
-            #self.sim.start_leak(self.leak_node_name, leak_area=area, leak_discharge_coefficient=0.75)
-            
+            # Step di inizio leak
+            self.leak_start_step = np.random.randint(10, 26)
+
             print(f"[LEAK] Nodi selezionati per la perdita: {self.leak_node_names}")
-            print(f"[LEAK] Il leak inizierà allo step {self.leak_start_step}")            
-    
+            print(f"[LEAK] Il leak inizierà allo step {self.leak_start_step}")
         else:
-            print("[INIT] Nessuna perdita inserita in questo episodio.")
-
-
+            print("[INIT] Episodio senza leak")
+            
         self.sim.init_simulation(
             global_timestep=self.hydraulic_timestep,
             duration=self.max_steps * self.hydraulic_timestep
@@ -124,20 +119,20 @@ def run_GGNN(inp_path):
         2) non ha topological layer
     """
 
-    num_episodes = 300
+    num_episodes = 200
     max_steps    = 50
     lr           = 1e-2
-    epochs       = 1000
+    epochs       = 500
     area = 0.1
     HIDDEN_SIZE = 132
     PROPAG_STEPS = 7
     WINDOW_SIZE = 4 
-    
+
 
     all_snapshots_with_leak = []
     rf_training_data = []
 
-    env = WNTREnv(inp_path, max_steps=max_steps, num_leaks=2)
+    env = WNTREnv(inp_path, max_steps=max_steps)
 
     # costruisci adiacency matrix e indici UNA VOLTA all'inizio dato che non cambiano
     adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(env.wn)
@@ -146,7 +141,7 @@ def run_GGNN(inp_path):
     for ep in range(num_episodes):
         print(f"\n--- Episodio {ep+1}/{num_episodes}")
         
-        env.reset(with_leak=True)
+        env.reset(num_leaks=2)
         sim = env.sim
 
         episode_feature_vectors = []
@@ -307,11 +302,6 @@ def run_GGNN(inp_path):
 
 
 
-
-
-
-
-
 if __name__ == "__main__":
-    run_GGNN(inp_path=r"C:\Users\nephr\Desktop\Uni-Nuova\Tesi\Networks-found\20x20_branched.inp")
+    run_GGNN(inp_path=r"/home/zagaria/Tesi/Tesi/Networks-found/20x20_branched.inp")
 
