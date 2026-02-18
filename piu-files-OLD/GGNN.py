@@ -52,84 +52,35 @@ class GRUCell(nn.Module):
             
             return output   
        
-class GGNNModel(nn.Module):
-    
-    def __init__(self, attr_size, hidden_size, propag_steps):    
-        super(GGNNModel, self).__init__()        
-        
-        self.attr_size = attr_size
+class GGNNEncoder(nn.Module):
+    def __init__(self, attr_size, hidden_size, propag_steps):
+        super().__init__()
+
         self.hidden_size = hidden_size
-        self.propag_steps = propag_steps            
-        
-        # Input: grandezza dell'attributo, output dell'input uno stato di size hidden size
-        self.linear_i = nn.Linear(attr_size,hidden_size)
+        self.linear_i = nn.Linear(attr_size, hidden_size)
+        self.gru = GRUCell(2 * hidden_size, hidden_size)
 
-        # 2*hidden size perche riceve in input a_in || a_out = due messaggi concatenati, ma in 
-        # output deve restituire in output un output di grandezza hidden_size
-        self.gru = GRUCell(2*hidden_size, hidden_size)  
+        self.propag_steps = propag_steps
 
-        # output: un solo numero per nodo
-        self.linear_o = nn.Linear(hidden_size, 1)
-        self._initialization()
-
-    # Funzione che serve ad iniziallizzare i pesi        
-    def _initialization(self): 
-        # Inizializza i pesi di linear_i per reti ReLU in modo ottimale
-        torch.nn.init.kaiming_normal_(self.linear_i.weight)
-        torch.nn.init.constant_(self.linear_i.bias, 0)
-        # Inizializza la matrice dei pesi finali con Xavier
-        torch.nn.init.xavier_normal_(self.linear_o.weight)
-        torch.nn.init.constant_(self.linear_o.bias, 0)          
-    
     def forward(self, attr_matrix, adj_matrix):
-        
-        '''        
-        attr_matrix of shape (batch, graph_size, attributes dimension)
-        adj_matrix of shape (batch, graph_size, graph_size)   
-        
-            > Only 0 (nonexistent) or 1 (existent) edge types
-        
-        '''
+        """
+        attr_matrix: [B, N, F]
+        adj_matrix:  [B, N, N]
+        return:      [B, N, hidden_size]
+        """
 
-        # maschera nodi non validi (es. con pressione = 0)
-        mask = (attr_matrix[:,:,0] != 0)*1
-        
-        # matrice di adiacenza entrante e uscente
-        A_in = adj_matrix.float() 
-        A_out = torch.transpose(A_in,-2,-1) 
-        
-        if len(A_in.shape) < 3:
-            A_in = torch.unsqueeze(A_in,0)  
-            A_out = torch.unsqueeze(A_out,0)  
-        if len(attr_matrix.shape) < 3:
-            attr_matrix = torch.unsqueeze(attr_matrix,0)
-               
-        #print(np.shape(attr_matrix))
+        A_in  = adj_matrix.float()
+        A_out = adj_matrix.float().transpose(-2, -1)
 
-        # inizia l'hidden state attraverso le pressioni in input
-        hidden_state = self.linear_i(attr_matrix.float()).relu()
-                
-        #print(np.shape(self.linear_i(attr_matrix.float()).relu()))
-        for step in range(self.propag_steps):            
-            # a_v = A_v[h_1 ...  h_|V|]
-            
-            #print(np.shape(A_in))
-            #print(np.shape(A_out))
-            #exit()
+        h = self.linear_i(attr_matrix).relu()
 
-            # Formula i messaggi (message passing a vicini entranti e vicini uscenti)
-            a_in = torch.bmm(A_in, hidden_state)
-            a_out = torch.bmm(A_out, hidden_state)
+        for _ in range(self.propag_steps):
+            a_in  = torch.bmm(A_in, h)
+            a_out = torch.bmm(A_out, h)
+            h = self.gru(torch.cat((a_in, a_out), dim=-1), h)
 
-            # Update dello stato GRU-like
-            hidden_state = self.gru(torch.cat((a_in, a_out), -1), hidden_state)
-                    
-        # Crea l'output e fa la soft
-        output = self.linear_o(hidden_state).squeeze(-1)  
-        output = output + (mask + 1e-45).log() # Mask output
-        output = output.log_softmax(1) 
+        return h
 
-        return output       
      
 
 # ============================================================
@@ -194,3 +145,51 @@ class RandomForestLeakOnsetDetector:
         return self.model.predict_proba(x)[0, 1]
 
 
+class GGNN_LSTM_LeakDetector(nn.Module):
+    def __init__(
+        self,
+        ggnn: GGNNEncoder,
+        hidden_size,
+        lstm_hidden=64,
+        lstm_layers=1
+    ):
+        super().__init__()
+
+        self.ggnn = ggnn
+
+        self.lstm = nn.LSTM(
+            input_size=hidden_size,
+            hidden_size=lstm_hidden,
+            num_layers=lstm_layers,
+            batch_first=True
+        )
+
+        # output per nodo
+        self.readout = nn.Linear(lstm_hidden, 1)
+
+    def forward(self, attr_seq, adj):
+        """
+        attr_seq: [T, B, N, F]
+        adj:      [B, N, N]
+        """
+
+        gnn_embeddings = []
+
+        for t in range(attr_seq.size(0)):
+            h_t = self.ggnn(attr_seq[t], adj)     # [B, N, H]
+            gnn_embeddings.append(h_t)
+
+        # [B, T, N, H]
+        H = torch.stack(gnn_embeddings, dim=1)
+
+        # LSTM su ogni nodo indipendentemente
+        B, T, N, Hdim = H.shape
+        H = H.view(B * N, T, Hdim)
+
+        lstm_out, _ = self.lstm(H)
+        z_T = lstm_out[:, -1, :]                  # [B*N, lstm_hidden]
+
+        u = self.readout(z_T)                     # [B*N, 1]
+        u = u.view(B, N)
+
+        return u

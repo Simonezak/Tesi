@@ -10,7 +10,7 @@ from main_dyn_topologyknown_01 import func_gen_B2_lu
 from topological import compute_polygon_flux, plot_leak_probability_multi, get_inital_polygons_flux_limits, plot_cell_complex_flux, construct_matrix_f, plot_node_demand, plot_edge_flowrate, get_initial_node_demand_limits, get_initial_edge_flow_limits, plot_leak_probability, build_M
 from wntr_to_pyg import build_pyg_time_series
 from topological import plot_edge_s_u, plot_edge_Uhat
-from GGNN_multi import GGNNModel, RandomForestLeakOnsetDetector
+from GGNN_Regression import GGNNModel, RandomForestLeakOnsetDetector
 
 import wntr
 from wntr.sim.interactive_network_simulator import InteractiveWNTRSimulator
@@ -141,7 +141,11 @@ def run_GGNN(inp_path):
     for ep in range(num_episodes):
         print(f"\n--- Episodio {ep+1}/{num_episodes}")
         
+<<<<<<<< HEAD:piu-files-OLD/wntr_exp_multi.py
         n_leaks = np.random.randint(0, 3)
+========
+        n_leaks = np.random.randint(1, 3)
+>>>>>>>> 5292f693bf0be81d20d128a123347236686ba0c2:piu-files/wntr_exp_Regression.py
         env.reset(num_leaks=n_leaks)
         sim = env.sim
 
@@ -278,8 +282,13 @@ def run_GGNN(inp_path):
 
     test_env = WNTREnv(inp_path, max_steps=max_steps)
     adj_matrix, node2idx, idx2node = build_static_graph_from_wntr(test_env.wn)
+<<<<<<<< HEAD:piu-files-OLD/wntr_exp_multi.py
     n_leaks = np.random.randint(0, 3)
     test_env.reset(num_leaks=0)
+========
+    n_leaks = np.random.randint(1, 3)
+    test_env.reset(num_leaks=n_leaks)
+>>>>>>>> 5292f693bf0be81d20d128a123347236686ba0c2:piu-files/wntr_exp_Regression.py
     sim = test_env.sim
 
     test_snapshots = []
@@ -328,8 +337,11 @@ def run_GGNN(inp_path):
         prob = rf.predict(pressures)
         onset_scores.append(prob)
 
+<<<<<<<< HEAD:piu-files-OLD/wntr_exp_multi.py
     print("onset_scores")
     print(onset_scores)
+========
+>>>>>>>> 5292f693bf0be81d20d128a123347236686ba0c2:piu-files/wntr_exp_Regression.py
     predicted_onset = int(np.argmax(onset_scores))
     print(f"\n Inizio leak stimato allo step: {predicted_onset}")
 
