@@ -1,5 +1,0 @@
-La via che mi sembra più percorribile è quella della GGNN. Ho visto vari paper e quelli con la GGNN sembrano quelli piu simili al mio lavoro di LD puro e con maggiori risultati.
-
-Tuttavia sono maggiormente lavori single-leak, e dai paper che ho visto, nessuno calcola la quantità di anomalia, la maggior parte calcolano un certo tipo di probabilità.
-
-quello che vorrei fare è prendere uno di questi modelli da usare come base e adattarlo all'output in modo da avere l'anomalia, calcolandola in base a pressure
